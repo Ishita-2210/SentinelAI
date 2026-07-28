@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# Models
+*.pt
+*.onnx
+
+# Database
+*.db
+
+# Virtual Environment
+.venv/
+env/
