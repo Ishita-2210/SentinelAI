@@ -23,3 +23,11 @@ class ObjectState:
     velocity: tuple[float, float] = (0.0, 0.0)
 
     current_zone: str | None = None
+
+    status: str = "ACTIVE"
+    missing_since: datetime | None = None
+
+    zone_entered_at: datetime | None = None
+    loitering: bool = False
+
+    running: bool = False

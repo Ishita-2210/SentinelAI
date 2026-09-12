@@ -1,15 +1,18 @@
 import cv2
+from datetime import datetime
 
 from backend.detector.detector import Detector
 from backend.tracker.tracker import Tracker
-from datetime import datetime
 from backend.state_manager.state_manager import StateManager
+from backend.event_engine.event_engine import EventEngine
+
 
 def main():
 
     detector = Detector()
     tracker = Tracker()
     state_manager = StateManager()
+    event_engine = EventEngine()
 
     camera = cv2.VideoCapture(0)
 
@@ -24,36 +27,54 @@ def main():
             print("Failed to read frame.")
             break
 
-        # -------------------------
-        # 1. Object Detection
-        # -------------------------
+        # ----------------------------------
+        # Detection
+        # ----------------------------------
 
         detections = detector.detect(frame)
 
-        # -------------------------
-        # 2. Object Tracking
-        # -------------------------
+        # ----------------------------------
+        # Tracking
+        # ----------------------------------
 
         tracks = tracker.update(detections)
+
+        # ----------------------------------
+        # State Management
+        # ----------------------------------
+
         timestamp = datetime.now()
 
         states = state_manager.update(
             tracks,
             timestamp,
         )
-        
-        for state in states:
+
+        # ----------------------------------
+        # Event Reasoning
+        # ----------------------------------
+
+        events = event_engine.update(
+            states,
+            timestamp,
+        )
+
+        # ----------------------------------
+        # Print events
+        # ----------------------------------
+
+        for event in events:
 
             print(
-                f"ID: {state.track_id} | "
-                f"Object: {state.class_name} | "
-                f"Position: {state.current_box.center} | "
-                f"Velocity: {state.velocity}"
+                f"EVENT: {event.event_type} | "
+                f"ID: {event.track_id} | "
+                f"Zone: {event.zone} | "
+                f"{event.description}"
             )
 
-        # -------------------------
-        # 3. Visualization
-        # -------------------------
+        # ----------------------------------
+        # Draw objects
+        # ----------------------------------
 
         for track in tracks:
 
@@ -64,35 +85,85 @@ def main():
             x2 = int(box.x2)
             y2 = int(box.y2)
 
+            state = next(
+                (
+                    s for s in states
+                    if s.track_id == track.track_id
+                ),
+                None,
+            )
+
+            # Default
+            box_color = (0, 255, 0)
+
+            label = (
+                f"{track.class_name} "
+                f"ID:{track.track_id}"
+            )
+
+            # ----------------------------------
+            # Loitering
+            # ----------------------------------
+
+            if state and state.loitering:
+
+                box_color = (0, 0, 255)
+
+                label = (
+                    f"LOITERING | "
+                    f"{track.class_name} "
+                    f"ID:{track.track_id}"
+                )
+
+            # ----------------------------------
+            # Running
+            # ----------------------------------
+
+            elif state and state.running:
+
+                box_color = (255, 0, 0)
+
+                label = (
+                    f"RUNNING | "
+                    f"{track.class_name} "
+                    f"ID:{track.track_id}"
+                )
+
+            # ----------------------------------
             # Draw bounding box
+            # ----------------------------------
+
             cv2.rectangle(
                 frame,
                 (x1, y1),
                 (x2, y2),
-                (0, 255, 0),
+                box_color,
                 2,
             )
 
-            # Display class + track ID
-            label = (
-                f"{track.class_name} "
-                f"ID:{track.track_id} "
-                f"{track.confidence:.2f}"
-            )
+            # ----------------------------------
+            # Draw label
+            # ----------------------------------
 
             cv2.putText(
                 frame,
                 label,
                 (x1, max(y1 - 10, 20)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
+                0.6,
+                box_color,
                 2,
             )
 
-        cv2.imshow("SentinelAI", frame)
+        # ----------------------------------
+        # Display
+        # ----------------------------------
 
-        # Press Q to quit
+        cv2.imshow(
+            "SentinelAI",
+            frame,
+        )
+
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
