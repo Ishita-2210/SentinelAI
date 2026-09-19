@@ -31,3 +31,5 @@ class ObjectState:
     loitering: bool = False
 
     running: bool = False
+
+    unattended: bool = False

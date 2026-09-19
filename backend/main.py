@@ -9,15 +9,29 @@ from backend.event_engine.event_engine import EventEngine
 
 def main():
 
+    # ----------------------------------
+    # Initialize components
+    # ----------------------------------
+
     detector = Detector()
     tracker = Tracker()
     state_manager = StateManager()
     event_engine = EventEngine()
 
+    # ----------------------------------
+    # Open webcam
+    # ----------------------------------
+
     camera = cv2.VideoCapture(0)
 
     if not camera.isOpened():
-        raise RuntimeError("Could not open webcam.")
+        raise RuntimeError(
+            "Could not open webcam."
+        )
+
+    # ----------------------------------
+    # Main loop
+    # ----------------------------------
 
     while True:
 
@@ -40,7 +54,7 @@ def main():
         tracks = tracker.update(detections)
 
         # ----------------------------------
-        # State Management
+        # State management
         # ----------------------------------
 
         timestamp = datetime.now()
@@ -51,7 +65,7 @@ def main():
         )
 
         # ----------------------------------
-        # Event Reasoning
+        # Event reasoning
         # ----------------------------------
 
         events = event_engine.update(
@@ -73,7 +87,7 @@ def main():
             )
 
         # ----------------------------------
-        # Draw objects
+        # Draw tracks
         # ----------------------------------
 
         for track in tracks:
@@ -87,13 +101,18 @@ def main():
 
             state = next(
                 (
-                    s for s in states
-                    if s.track_id == track.track_id
+                    s
+                    for s in states
+                    if s.track_id
+                    == track.track_id
                 ),
                 None,
             )
 
+            # ----------------------------------
             # Default
+            # ----------------------------------
+
             box_color = (0, 255, 0)
 
             label = (
@@ -102,10 +121,30 @@ def main():
             )
 
             # ----------------------------------
+            # Unattended
+            # ----------------------------------
+
+            if (
+                state is not None
+                and state.unattended
+            ):
+
+                box_color = (0, 0, 255)
+
+                label = (
+                    f"UNATTENDED | "
+                    f"{track.class_name} "
+                    f"ID:{track.track_id}"
+                )
+
+            # ----------------------------------
             # Loitering
             # ----------------------------------
 
-            if state and state.loitering:
+            elif (
+                state is not None
+                and state.loitering
+            ):
 
                 box_color = (0, 0, 255)
 
@@ -119,7 +158,10 @@ def main():
             # Running
             # ----------------------------------
 
-            elif state and state.running:
+            elif (
+                state is not None
+                and state.running
+            ):
 
                 box_color = (255, 0, 0)
 
@@ -164,8 +206,13 @@ def main():
             frame,
         )
 
+        # Q = quit
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
+
+    # ----------------------------------
+    # Cleanup
+    # ----------------------------------
 
     camera.release()
     cv2.destroyAllWindows()
