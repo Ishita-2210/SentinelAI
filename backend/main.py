@@ -5,7 +5,7 @@ from backend.detector.detector import Detector
 from backend.tracker.tracker import Tracker
 from backend.state_manager.state_manager import StateManager
 from backend.event_engine.event_engine import EventEngine
-
+from backend.database.event_database import EventDatabase
 
 def main():
 
@@ -17,6 +17,7 @@ def main():
     tracker = Tracker()
     state_manager = StateManager()
     event_engine = EventEngine()
+    database = EventDatabase()
 
     # ----------------------------------
     # Open webcam
@@ -78,13 +79,14 @@ def main():
         # ----------------------------------
 
         for event in events:
-
+            event_id = database.save_event(event)
             print(
                 f"EVENT: {event.event_type} | "
                 f"ID: {event.track_id} | "
                 f"Zone: {event.zone} | "
                 f"{event.description}"
             )
+
 
         # ----------------------------------
         # Draw tracks
@@ -216,6 +218,7 @@ def main():
 
     camera.release()
     cv2.destroyAllWindows()
+    database.close()
 
 
 if __name__ == "__main__":
