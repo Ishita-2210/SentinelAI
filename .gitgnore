@@ -12,3 +12,7 @@ __pycache__/
 # Virtual Environment
 .venv/
 env/
+
+# Runtime data
+data/*.db
+data/events/
