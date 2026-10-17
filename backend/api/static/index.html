@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SentinelAI</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --panel: #171d25;
+    --panel-2: #1e2630;
+    --border: #2a3441;
+    --text: #e6ebf1;
+    --muted: #8b98a8;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --accent: #4c9aff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6f9;
+      --panel: #ffffff;
+      --panel-2: #eef1f5;
+      --border: #d5dbe3;
+      --text: #18212b;
+      --muted: #5d6b7b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { margin: 0; font-size: 18px; letter-spacing: .3px; }
+  header .tag { color: var(--muted); font-size: 12px; }
+  .pills { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    background: var(--panel-2); border: 1px solid var(--border);
+    font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--bad); }
+  main {
+    display: grid;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    gap: 16px;
+    padding: 16px 20px;
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    min-width: 0;
+  }
+  section h2 {
+    margin: 0 0 10px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .8px; color: var(--muted);
+  }
+  .feed {
+    position: relative; background: #000; border-radius: 8px; overflow: hidden;
+    aspect-ratio: 4 / 3; display: grid; place-items: center;
+  }
+  .feed img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .feed .offline { position: absolute; color: var(--muted); font-size: 13px; }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+  .stat { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 20px; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .stat.alert b { color: var(--bad); }
+  .ask-row { display: flex; gap: 8px; }
+  input[type=text], select {
+    flex: 1; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font: inherit; min-width: 0;
+  }
+  button {
+    background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+    padding: 8px 14px; font: inherit; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+  .chip {
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  }
+  .answer {
+    background: var(--panel-2); border-radius: 8px; padding: 10px 12px;
+    white-space: pre-wrap; min-height: 60px; max-height: 300px; overflow: auto;
+  }
+  .answer .meta { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .events { grid-column: 1 / -1; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .filters select { flex: 0 0 auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.desc { color: var(--muted); max-width: 380px; }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; border: 1px solid var(--border);
+  }
+  .badge.YES { color: var(--ok); border-color: var(--ok); }
+  .badge.NO { color: var(--bad); border-color: var(--bad); }
+  .badge.UNKNOWN { color: var(--warn); border-color: var(--warn); }
+  .badge.none { color: var(--muted); }
+  .type-UNATTENDED_OBJECT, .type-LOITERING { color: var(--bad); font-weight: 600; }
+  .type-RUNNING { color: var(--warn); font-weight: 600; }
+  .thumb { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .empty { color: var(--muted); padding: 16px 0; text-align: center; }
+  #modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.75);
+    display: none; place-items: center; padding: 20px; z-index: 10;
+  }
+  #modal.open { display: grid; }
+  #modal img { max-width: 100%; max-height: 90vh; border-radius: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>SentinelAI</h1>
+  <span class="tag">Event-driven edge intelligence</span>
+  <div class="pills">
+    <span class="pill"><span class="dot" id="d-pipeline"></span><span id="t-pipeline">Pipeline</span></span>
+    <span class="pill"><span class="dot" id="d-llm"></span><span id="t-llm">Local LLM</span></span>
+    <span class="pill"><span class="dot" id="d-esp"></span><span id="t-esp">ESP32</span></span>
+    <span class="pill"><span id="t-total">0</span> events</span>
+  </div>
+</header>
+
+<main>
+  <section>
+    <h2>Live camera</h2>
+    <div class="feed">
+      <img id="feed" alt="Live camera feed">
+      <div class="offline" id="feed-offline">Pipeline offline. Start it with <code>python -m backend.main</code></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="s-fps">-</b><span>FPS</span></div>
+      <div class="stat"><b id="s-tracks">-</b><span>Tracked objects</span></div>
+      <div class="stat" id="stat-unattended"><b id="s-unattended">-</b><span>Unattended</span></div>
+      <div class="stat" id="stat-loitering"><b id="s-loitering">-</b><span>Loitering</span></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Ask about events</h2>
+    <div class="ask-row">
+      <input type="text" id="q" placeholder="What happened in the last hour?" maxlength="500">
+      <button id="ask">Ask</button>
+    </div>
+    <div class="chips">
+      <span class="chip">What happened recently?</span>
+      <span class="chip">Was there an unattended object?</span>
+      <span class="chip">Anyone loitering today?</span>
+      <span class="chip">Who entered in the last 30 minutes?</span>
+    </div>
+    <div class="answer" id="answer">Answers use only recorded events and say so when there is not enough evidence.</div>
+  </section>
+
+  <section class="events">
+    <h2>Event history</h2>
+    <div class="filters">
+      <select id="f-type">
+        <option value="">All types</option>
+        <option>UNATTENDED_OBJECT</option>
+        <option>LOITERING</option>
+        <option>RUNNING</option>
+        <option>PERSON_ENTERED</option>
+        <option>PERSON_EXITED</option>
+        <option>ZONE_CHANGED</option>
+      </select>
+      <select id="f-window">
+        <option value="">Any time</option>
+        <option value="15">Last 15 min</option>
+        <option value="60">Last hour</option>
+        <option value="1440">Last 24 hours</option>
+      </select>
+    </div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Time</th><th>Type</th><th>Object</th><th>Zone</th><th>Visual check</th><th>Description</th><th>Evidence</th></tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" hidden>No events yet.</div>
+  </section>
+</main>
+
+<div id="modal"><img id="modal-img" alt="Evidence frame"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setPill(name, on, label) {
+  $("d-" + name).className = "dot " + (on ? "on" : "off");
+  $("t-" + name).textContent = label;
+}
+
+function cell(text, className) {
+  const td = document.createElement("td");
+  td.textContent = text == null ? "-" : text;
+  if (className) td.className = className;
+  return td;
+}
+
+async function refreshStatus() {
+  try {
+    const res = await fetch("/api/status");
+    const s = await res.json();
+
+    setPill("pipeline", s.pipeline_online, s.pipeline_online ? "Pipeline online" : "Pipeline offline");
+    setPill("llm", s.llm_available, s.llm_available ? "LLM: " + s.llm_model : "LLM offline (basic answers)");
+    setPill("esp", s.esp32_configured, s.esp32_configured ? "ESP32 connected" : "ESP32: dry run");
+    $("t-total").textContent = s.total_events;
+
+    const live = s.live || {};
+    $("s-fps").textContent = live.fps ?? "-";
+    $("s-tracks").textContent = live.tracks ?? "-";
+    $("s-unattended").textContent = live.unattended ?? "-";
+    $("s-loitering").textContent = live.loitering ?? "-";
+    $("stat-unattended").classList.toggle("alert", (live.unattended || 0) > 0);
+    $("stat-loitering").classList.toggle("alert", (live.loitering || 0) > 0);
+
+    const feed = $("feed");
+    if (s.pipeline_online) {
+      $("feed-offline").hidden = true;
+      if (!feed.src.includes("/api/stream")) feed.src = "/api/stream";
+    } else {
+      $("feed-offline").hidden = false;
+      feed.removeAttribute("src");
+    }
+  } catch (e) { /* server restarting: try again next tick */ }
+}
+
+async function refreshEvents() {
+  const params = new URLSearchParams({ limit: "50" });
+  if ($("f-type").value) params.set("type", $("f-type").value);
+  if ($("f-window").value) params.set("since_minutes", $("f-window").value);
+
+  try {
+    const res = await fetch("/api/events?" + params);
+    const events = await res.json();
+
+    const body = $("rows");
+    body.replaceChildren();
+
+    for (const ev of events) {
+      const tr = document.createElement("tr");
+      tr.appendChild(cell(ev.id));
+      tr.appendChild(cell(ev.timestamp.replace("T", " ").slice(0, 19)));
+      tr.appendChild(cell(ev.event_type, "type-" + ev.event_type));
+      tr.appendChild(cell(ev.class_name + " #" + ev.track_id));
+      tr.appendChild(cell(ev.zone));
+
+      const vcell = document.createElement("td");
+      const badge = document.createElement("span");
+      const verdict = ev.verification;
+      badge.className = "badge " + (verdict || "none");
+      badge.textContent = verdict || "not checked";
+      if (ev.verification_detail) badge.title = ev.verification_detail;
+      vcell.appendChild(badge);
+      tr.appendChild(vcell);
+
+      tr.appendChild(cell(ev.description, "desc"));
+
+      const ecell = document.createElement("td");
+      if (ev.evidence_path) {
+        const link = document.createElement("span");
+        link.className = "thumb";
+        link.textContent = "view";
+        link.onclick = () => openEvidence(ev.id);
+        ecell.appendChild(link);
+      } else {
+        ecell.textContent = "-";
+      }
+      tr.appendChild(ecell);
+
+      body.appendChild(tr);
+    }
+
+    $("empty").hidden = events.length > 0;
+  } catch (e) { /* ignore transient errors */ }
+}
+
+function openEvidence(id) {
+  $("modal-img").src = "/api/evidence/" + id;
+  $("modal").classList.add("open");
+}
+$("modal").onclick = () => $("modal").classList.remove("open");
+
+async function ask(question) {
+  if (!question.trim()) return;
+  const btn = $("ask");
+  const answer = $("answer");
+  btn.disabled = true;
+  answer.textContent = "Searching recorded events...";
+
+  try {
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+
+    answer.textContent = data.answer;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = data.events.length + " event(s) used - " +
+      (data.llm_used ? "written by local LLM" : "basic summary (LLM not used)");
+    answer.appendChild(meta);
+  } catch (e) {
+    answer.textContent = "Could not get an answer: " + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("ask").onclick = () => ask($("q").value);
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") ask($("q").value); });
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.onclick = () => { $("q").value = chip.textContent; ask(chip.textContent); };
+});
+$("f-type").onchange = refreshEvents;
+$("f-window").onchange = refreshEvents;
+
+refreshStatus();
+refreshEvents();
+setInterval(refreshStatus, 3000);
+setInterval(refreshEvents, 5000);
+</script>
+</body>
+</html>

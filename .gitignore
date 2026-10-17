@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Models
+*.pt
+*.onnx
+*.safetensors
+models/
+training/outputs/
+
+# Database
+*.db
+
+# Virtual Environment
+.venv/
+env/
+
+# Runtime data
+data/*.db
+data/events/
+data/live/
+
+# Secrets and environment variables
+.env
+.env.*
+!.env.example
