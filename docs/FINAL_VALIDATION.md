@@ -30,6 +30,7 @@ Open http://127.0.0.1:8010. Stop with Ctrl+C. The zero-argument launcher also se
 | ESP32 software checks | Inert checker: blocked, `serial_opened=false`; software fixtures do not establish physical camera operation |
 | Firmware compilation | Five builds passed: telemetry, UART probe, camera UART responder, programmer bridge, inert camera capture reference |
 | Cleanup | Bounded webcam run returned 0; no matching backend/presentation/model worker processes remained; port 8010 had no listener |
+| Post-integration recorded-video smoke | Full-AI flags retained; bounded 8-second run used `data/demo/webcam.avi`, ran actual YOLO/ByteTrack, saved one new event/JPEG, and exited 0. This short check does not claim model inference completed |
 
 The base caption described visible people, a phone and room objects. Its statements were not independently adjudicated for accuracy; demographic descriptions and other generated details remain unverified model output. The adapter answer is also uncalibrated. Neither run proves dwell, intent, ownership, running or other temporal events.
 
@@ -87,3 +88,9 @@ The final suite retains one existing Starlette/httpx test-client deprecation war
 Hardware field accuracy, false-positive rates, tracking accuracy, latency and FPS improvements were not measured. Webcam acquisition and YOLO remain synchronous; slow AI is isolated in workers. There is no automatic evidence retention, authentication for public hosting, or general semantic database search. IDs may change after loss; repeated-video entries are replay events. Tests do not make ESP32 hardware presentation-ready.
 
 **ESP32 camera integration is experimental. Physical sensor initialization, firmware flashing, genuine JPEG reception, continuous video, dashboard display, and AI processing of real ESP32-origin frames have not been verified end to end.**
+
+## Local Git integration note
+
+The initial branch was `feature/sentinelai-complete`; local `main` was its ancestor. The reviewed implementation was committed and fast-forwarded into local `main`, preserving the feature history. No remote was changed. Local main and the existing `origin/main` reference diverge; remote reconciliation was outside this local-commit task.
+
+During the branch switch/fast-forward, Git removed legacy files that older main tracked and the feature commit had untracked: `yolo11n.pt`, `data/sentinelai.db` and `.gitgnore`. These were restored locally from the preserved Git objects and remain ignored. The restored YOLO Git blob matches `45b273b46165267f2d4c90df94468b547f43cf67`; presentation preflight and the recorded-video detector smoke passed afterward. The legacy database was restored from its historical Git snapshot; its pre-switch ignored bytes were not independently captured, so equivalence to that previous local copy cannot be guaranteed. The presentation database/evidence and demo/evaluation directories were unaffected. No model weights or database were added to the final commits.
