@@ -1,0 +1,9 @@
+# Verified Python 3.13 host runtime. No VLM or supervision dependency.
+ultralytics==8.4.182
+lap==0.5.13
+fastapi==0.148.0
+uvicorn==0.54.0
+httpx==0.28.1
+PyYAML==6.0.3
+pyserial==3.5
+pytest==9.1.1

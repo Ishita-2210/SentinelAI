@@ -1,0 +1,4 @@
+-r requirements-core.txt
+playwright==1.64.0
+platformio==6.2.0
+esptool==5.6.0

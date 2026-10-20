@@ -1,0 +1,17 @@
+# Copy to config.yaml locally. No secrets or serial access enabled.
+camera:
+  source: 0
+detector:
+  model_path: yolo11n.pt
+  confidence_threshold: 0.5
+  iou_threshold: 0.7
+vlm:
+  enabled: false
+llm:
+  enabled: false
+  model_id: HuggingFaceTB/SmolLM2-135M-Instruct
+esp32:
+  enabled: false
+  mode: serial
+  serial_port: null
+  baudrate: 115200

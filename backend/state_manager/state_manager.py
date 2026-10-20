@@ -56,12 +56,13 @@ class StateManager:
                 state.previous_box = state.current_box
                 state.current_box = current_box
 
+                elapsed = max((timestamp - state.last_seen).total_seconds(), 1e-6)
                 state.last_seen = timestamp
 
                 previous_x, previous_y = previous_center
 
-                velocity_x = center_x - previous_x
-                velocity_y = center_y - previous_y
+                velocity_x = (center_x - previous_x) / (elapsed * 30.0)
+                velocity_y = (center_y - previous_y) / (elapsed * 30.0)
 
                 state.velocity = (
                     velocity_x,

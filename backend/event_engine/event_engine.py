@@ -57,28 +57,38 @@ class EventEngine:
         # ----------------------------------
 
         # Track ID -> previous zone
-        self.previous_zones: dict[
-            int,
-            str | None
-        ] = {}
+        self.previous_zones: dict[int, str | None] = {}
+
+        # Track ID -> first time we saw this person in any zone
+        self.first_seen_in_zone: dict[int, datetime] = {}
 
         # Object track ID -> person track ID
-        self.object_person_association: dict[
-            int,
-            int
-        ] = {}
+        self.object_person_association: dict[int, int] = {}
 
         # Object track ID -> separation start time
-        self.separation_times: dict[
-            int,
-            datetime
-        ] = {}
+        self.separation_times: dict[int, datetime] = {}
 
         # Person track ID -> last known position
-        self.person_last_positions: dict[
-            int,
-            tuple[float, float]
-        ] = {}
+        self.person_last_positions: dict[int, tuple[float, float]] = {}
+
+        # Track IDs that have already triggered PERSON_ENTERED
+        self._entered: set[int] = set()
+
+        # Track IDs currently known to be in a zone (for exit detection)
+        self._active_track_ids: set[int] = set()
+        self._last_seen: dict[int, datetime] = {}
+        self.missing_timeout = 1.0
+
+    def reset(self):
+        """Start a new source segment without carrying temporal claims across a seek."""
+        self.previous_zones.clear()
+        self.first_seen_in_zone.clear()
+        self.object_person_association.clear()
+        self.separation_times.clear()
+        self.person_last_positions.clear()
+        self._entered.clear()
+        self._active_track_ids.clear()
+        self._last_seen.clear()
 
     # ======================================
     # MAIN UPDATE
@@ -102,15 +112,15 @@ class EventEngine:
             if state.status == "ACTIVE"
         ]
 
+        # Current track IDs visible this frame
+        current_track_ids = {s.track_id for s in active_states}
+
         # ----------------------------------
         # Update zones for ALL objects
         # ----------------------------------
 
         for state in active_states:
-
-            state.current_zone = self.get_zone(
-                state.current_box.center
-            )
+            state.current_zone = self.get_zone(state.current_box.center)
 
         # ----------------------------------
         # Store latest person positions
@@ -123,10 +133,10 @@ class EventEngine:
         ]
 
         for person in people:
-
-            self.person_last_positions[
-                person.track_id
-            ] = person.current_box.center
+            self._last_seen[person.track_id] = timestamp
+            self.person_last_positions[person.track_id] = (
+                person.current_box.center
+            )
 
         # ==================================
         # PERSON EVENTS
@@ -135,10 +145,7 @@ class EventEngine:
         for state in people:
 
             current_zone = state.current_zone
-
-            previous_zone = self.previous_zones.get(
-                state.track_id
-            )
+            previous_zone = self.previous_zones.get(state.track_id)
 
             # ----------------------------------
             # PERSON ENTERED
@@ -149,7 +156,14 @@ class EventEngine:
                 and previous_zone is None
             ):
 
-                state.zone_entered_at = timestamp
+                self._entered.add(state.track_id)
+
+                # Use first_seen so that if the engine missed the first
+                # frame (e.g. empty states passed), dwell still accumulates
+                # correctly from when the object was first detected.
+                zone_start = timestamp
+                state.zone_entered_at = zone_start
+                self.first_seen_in_zone[state.track_id] = zone_start
                 state.loitering = False
 
                 events.append(
@@ -167,7 +181,36 @@ class EventEngine:
                 )
 
             # ----------------------------------
-            # PERSON EXITED
+            # ZONE CHANGED (already entered, moved to different zone)
+            # ----------------------------------
+
+            elif (
+                current_zone is not None
+                and previous_zone is not None
+                and current_zone != previous_zone
+            ):
+
+                state.zone_entered_at = timestamp
+                self.first_seen_in_zone[state.track_id] = timestamp
+                state.loitering = False
+
+                events.append(
+                    Event(
+                        event_type="ZONE_CHANGED",
+                        track_id=state.track_id,
+                        class_name="person",
+                        timestamp=timestamp,
+                        zone=current_zone,
+                        description=(
+                            f"Person ID {state.track_id} "
+                            f"moved from {previous_zone} "
+                            f"to {current_zone}."
+                        ),
+                    )
+                )
+
+            # ----------------------------------
+            # PERSON EXITED zone (still visible but left all zones)
             # ----------------------------------
 
             elif (
@@ -193,34 +236,6 @@ class EventEngine:
                 )
 
             # ----------------------------------
-            # ZONE CHANGED
-            # ----------------------------------
-
-            elif (
-                current_zone is not None
-                and previous_zone is not None
-                and current_zone != previous_zone
-            ):
-
-                state.zone_entered_at = timestamp
-                state.loitering = False
-
-                events.append(
-                    Event(
-                        event_type="ZONE_CHANGED",
-                        track_id=state.track_id,
-                        class_name="person",
-                        timestamp=timestamp,
-                        zone=current_zone,
-                        description=(
-                            f"Person ID {state.track_id} "
-                            f"moved from {previous_zone} "
-                            f"to {current_zone}."
-                        ),
-                    )
-                )
-
-            # ----------------------------------
             # LOITERING
             # ----------------------------------
 
@@ -231,14 +246,10 @@ class EventEngine:
             ):
 
                 dwell_time = (
-                    timestamp
-                    - state.zone_entered_at
+                    timestamp - state.zone_entered_at
                 ).total_seconds()
 
-                if (
-                    dwell_time
-                    >= self.loitering_threshold
-                ):
+                if dwell_time >= self.loitering_threshold:
 
                     state.loitering = True
 
@@ -264,44 +275,71 @@ class EventEngine:
 
             velocity_x, velocity_y = state.velocity
 
-            speed = sqrt(
-                velocity_x ** 2
-                + velocity_y ** 2
-            )
+            speed = sqrt(velocity_x ** 2 + velocity_y ** 2)
 
-            if (
-                speed >= self.running_threshold
-                and not state.running
-            ):
+            if speed >= self.running_threshold:
 
-                state.running = True
+                if not state.running:
+                    state.running = True
 
-                events.append(
-                    Event(
-                        event_type="RUNNING",
-                        track_id=state.track_id,
-                        class_name="person",
-                        timestamp=timestamp,
-                        zone=current_zone,
-                        description=(
-                            f"Person ID {state.track_id} "
-                            f"is moving rapidly "
-                            f"(speed={speed:.1f})."
-                        ),
+                    events.append(
+                        Event(
+                            event_type="RUNNING",
+                            track_id=state.track_id,
+                            class_name="person",
+                            timestamp=timestamp,
+                            zone=current_zone,
+                            description=(
+                                f"Person ID {state.track_id} "
+                                f"is moving rapidly "
+                                f"(speed={speed:.1f} px/frame)."
+                            ),
+                        )
                     )
-                )
 
-            elif speed < self.running_threshold:
-
+            else:
+                # Reset so RUNNING can fire again if they accelerate later
                 state.running = False
 
             # ----------------------------------
             # Save current zone
             # ----------------------------------
 
-            self.previous_zones[
-                state.track_id
-            ] = current_zone
+            self.previous_zones[state.track_id] = current_zone
+
+        # ==================================
+        # PERSON EXITED — track disappeared entirely
+        # ==================================
+        # Catch people who were in a zone last frame but are gone now.
+
+        disappeared_track_ids = self._active_track_ids - current_track_ids
+
+        pending = set()
+        for tid in disappeared_track_ids:
+            if (timestamp - self._last_seen[tid]).total_seconds() < self.missing_timeout:
+                pending.add(tid)
+                continue
+            prev_zone = self.previous_zones.get(tid)
+            if prev_zone is not None:
+                events.append(
+                    Event(
+                        event_type="PERSON_EXITED",
+                        track_id=tid,
+                        class_name="person",
+                        timestamp=timestamp,
+                        zone=prev_zone,
+                        description=(
+                            f"Person ID {tid} "
+                            f"left {prev_zone} zone "
+                            f"(track lost)."
+                        ),
+                    )
+                )
+                # Clear so we don't fire again next frame
+                self.previous_zones[tid] = None
+
+        # Update active track set for next frame
+        self._active_track_ids = {s.track_id for s in people} | pending
 
         # ==================================
         # UNATTENDED OBJECTS
@@ -310,16 +348,10 @@ class EventEngine:
         objects = [
             state
             for state in active_states
-            if state.class_name
-            in self.unattended_classes
+            if state.class_name in self.unattended_classes
         ]
 
-        self.detect_unattended(
-            objects,
-            people,
-            timestamp,
-            events,
-        )
+        self.detect_unattended(objects, people, timestamp, events)
 
         return events
 
@@ -337,23 +369,16 @@ class EventEngine:
 
         for obj in objects:
 
-            object_center = (
-                obj.current_box.center
-            )
+            object_center = obj.current_box.center
 
             # ----------------------------------
             # Existing association
             # ----------------------------------
 
-            person_id = (
-                self.object_person_association.get(
-                    obj.track_id
-                )
-            )
+            person_id = self.object_person_association.get(obj.track_id)
 
             # ----------------------------------
-            # Find a person if no association
-            # exists
+            # Find a person if no association exists
             # ----------------------------------
 
             if person_id is None:
@@ -369,42 +394,22 @@ class EventEngine:
                     )
 
                     if distance < nearest_distance:
-
                         nearest_distance = distance
                         nearest_person = person
 
                 if (
                     nearest_person is not None
-                    and nearest_distance
-                    <= self.association_distance
+                    and nearest_distance <= self.association_distance
                 ):
 
-                    person_id = (
-                        nearest_person.track_id
-                    )
-
-                    self.object_person_association[
-                        obj.track_id
-                    ] = person_id
-
+                    person_id = nearest_person.track_id
+                    self.object_person_association[obj.track_id] = person_id
                     obj.unattended = False
-
-                    self.separation_times.pop(
-                        obj.track_id,
-                        None,
-                    )
-
-                    print(
-                        f"[ASSOCIATION] "
-                        f"{obj.class_name} ID "
-                        f"{obj.track_id} -> "
-                        f"Person ID {person_id}"
-                    )
-
+                    self.separation_times.pop(obj.track_id, None)
                     continue
 
             # ----------------------------------
-            # No association
+            # No association found at all
             # ----------------------------------
 
             if person_id is None:
@@ -414,11 +419,7 @@ class EventEngine:
             # Retrieve last known person position
             # ----------------------------------
 
-            person_position = (
-                self.person_last_positions.get(
-                    person_id
-                )
-            )
+            person_position = self.person_last_positions.get(person_id)
 
             if person_position is None:
                 continue
@@ -427,49 +428,24 @@ class EventEngine:
             # Distance from object to person
             # ----------------------------------
 
-            distance = self.distance(
-                object_center,
-                person_position,
-            )
+            distance = self.distance(object_center, person_position)
 
             # ----------------------------------
             # Person is still close
             # ----------------------------------
 
-            if (
-                distance
-                <= self.separation_distance
-            ):
-
-                self.separation_times.pop(
-                    obj.track_id,
-                    None,
-                )
-
+            owner_visible = any(p.track_id == person_id for p in people)
+            if owner_visible and distance <= self.separation_distance:
+                self.separation_times.pop(obj.track_id, None)
                 obj.unattended = False
-
                 continue
 
             # ----------------------------------
-            # Person has moved away
+            # Person has moved away — start timer
             # ----------------------------------
 
-            if (
-                obj.track_id
-                not in self.separation_times
-            ):
-
-                self.separation_times[
-                    obj.track_id
-                ] = timestamp
-
-                print(
-                    f"[SEPARATED] "
-                    f"{obj.class_name} ID "
-                    f"{obj.track_id} from "
-                    f"Person ID {person_id}"
-                )
-
+            if obj.track_id not in self.separation_times:
+                self.separation_times[obj.track_id] = timestamp
                 continue
 
             # ----------------------------------
@@ -477,12 +453,7 @@ class EventEngine:
             # ----------------------------------
 
             if not self.is_stationary(obj):
-
-                self.separation_times.pop(
-                    obj.track_id,
-                    None,
-                )
-
+                self.separation_times.pop(obj.track_id, None)
                 continue
 
             # ----------------------------------
@@ -490,28 +461,14 @@ class EventEngine:
             # ----------------------------------
 
             elapsed = (
-                timestamp
-                - self.separation_times[
-                    obj.track_id
-                ]
+                timestamp - self.separation_times[obj.track_id]
             ).total_seconds()
-
-            print(
-                f"[UNATTENDED CHECK] "
-                f"{obj.class_name} ID "
-                f"{obj.track_id} | "
-                f"time={elapsed:.1f}s"
-            )
 
             # ----------------------------------
             # Trigger unattended event
             # ----------------------------------
 
-            if (
-                elapsed
-                >= self.unattended_threshold
-                and not obj.unattended
-            ):
+            if elapsed >= self.unattended_threshold and not obj.unattended:
 
                 obj.unattended = True
 
@@ -538,60 +495,26 @@ class EventEngine:
     # STATIONARY OBJECT CHECK
     # ======================================
 
-    def is_stationary(
-        self,
-        obj: ObjectState,
-    ) -> bool:
+    def is_stationary(self, obj: ObjectState) -> bool:
 
-        # Need enough position history
         if len(obj.position_history) < 8:
             return False
 
-        recent_positions = (
-            obj.position_history[-8:]
-        )
+        recent_positions = obj.position_history[-8:]
 
-        # ----------------------------------
-        # Total displacement
-        # ----------------------------------
+        start_position = recent_positions[0]
+        end_position = recent_positions[-1]
 
-        start_position = (
-            recent_positions[0]
-        )
-
-        end_position = (
-            recent_positions[-1]
-        )
-
-        displacement = self.distance(
-            start_position,
-            end_position,
-        )
-
-        # ----------------------------------
-        # Total movement
-        # ----------------------------------
+        displacement = self.distance(start_position, end_position)
 
         total_movement = 0.0
-
-        for i in range(
-            1,
-            len(recent_positions),
-        ):
-
+        for i in range(1, len(recent_positions)):
             total_movement += self.distance(
                 recent_positions[i - 1],
                 recent_positions[i],
             )
 
-        # ----------------------------------
-        # Allow small tracking jitter
-        # ----------------------------------
-
-        return (
-            displacement <= 60.0
-            and total_movement <= 100.0
-        )
+        return displacement <= 60.0 and total_movement <= 100.0
 
     # ======================================
     # DISTANCE
@@ -605,23 +528,15 @@ class EventEngine:
 
         dx = point_a[0] - point_b[0]
         dy = point_a[1] - point_b[1]
-
-        return sqrt(
-            dx ** 2
-            + dy ** 2
-        )
+        return sqrt(dx ** 2 + dy ** 2)
 
     # ======================================
     # ZONE
     # ======================================
 
-    def get_zone(
-        self,
-        point: tuple[float, float],
-    ) -> str | None:
+    def get_zone(self, point: tuple[float, float]) -> str | None:
 
         for zone in self.zones:
-
             if zone.contains(point):
                 return zone.name
 

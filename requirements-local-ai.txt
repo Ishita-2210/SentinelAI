@@ -1,0 +1,6 @@
+# Existing host environment plus dependencies required by local model workers.
+-r requirements.txt
+timm==1.0.29
+einops==0.8.2
+accelerate==1.15.0
+peft==0.21.0
