@@ -1,5 +1,6 @@
 """Private stdin/stdout worker used only by the local Python backend."""
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,26 @@ protocol = sys.stdout
 def send(value):
     protocol.write(json.dumps(value)+"\n")
     protocol.flush()
+
+def prepare_llm_inputs(tokenizer, request, max_tokens=1536):
+    """Fit whole records while retaining the complete system prompt/question."""
+    messages = request["messages"]
+    context = request.get("context_events")
+    if context is not None:
+        context = list(context)
+    while True:
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        inputs = tokenizer(text, return_tensors="pt", truncation=False)
+        if inputs["input_ids"].shape[1] <= max_tokens:
+            break
+        if not context:
+            raise ValueError("Question and system prompt exceed the local context budget")
+        context.pop()
+        messages = [messages[0], {"role":"user", "content":
+            "Events: "+json.dumps(context)+"\nQuestion: "+request["question"]}]
+    allowed = [event["id"] for event in context] if context is not None else request.get("allowed_event_ids")
+    return inputs, allowed
+
 
 def main():
     config = json.loads(sys.stdin.readline())
@@ -49,23 +70,26 @@ def main():
         send(dict(type="load_error", error=str(exc)))
         return
     for line in sys.stdin:
+        request = {}
         try:
             request = json.loads(line)
             with contextlib.redirect_stdout(sys.stderr):
                 if config["kind"] == "vlm":
-                    result = model.verify(request["image_path"], request["question"])
+                    import io
+                    from PIL import Image
+                    image_bytes = Path(request["image_path"]).read_bytes()
+                    digest = hashlib.sha256(image_bytes).hexdigest()
+                    if request.get("evidence_sha256") and digest != request["evidence_sha256"]:
+                        raise ValueError("Evidence changed after verification was queued")
+                    with Image.open(io.BytesIO(image_bytes)) as image:
+                        result = model.verify(image, request["question"])
                     data = dict(answer=result.answer, raw_text=result.raw_text,
                                 confidence=None, adapter_loaded=result.adapter_loaded,
-                                error=result.error, model_id=config["model_id"])
+                                error=result.error, model_id=config["model_id"], task=result.task,
+                                evidence_sha256=digest)
                     if result.error: raise RuntimeError(result.error)
                 else:
-                    messages = request["messages"]
-                    text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-                    inputs = tokenizer(text, return_tensors="pt", truncation=True,
-                                       max_length=1536)
-                    # Finite valid completions enforce references from retrieved evidence.
-                    # The LLM chooses relevance; it cannot emit new identities or factual prose.
-                    allowed = request.get("allowed_event_ids")
+                    inputs, allowed = prepare_llm_inputs(tokenizer, request)
                     constrained = {}
                     if allowed is not None:
                         if len(allowed)>20 or any(type(x) is not int or x<1 for x in allowed):

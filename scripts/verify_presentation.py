@@ -1,5 +1,6 @@
 """Attach to the presentation launcher; real local models/browser, no serial."""
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -10,9 +11,13 @@ import httpx
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--url",default="http://127.0.0.1:8010")
+    ap.add_argument("--expected-source",choices=("webcam","video_file","esp32_camera_uart"),default="webcam")
+    ap.add_argument("--output",type=Path,default=None)
     args=ap.parse_args()
-    out=Path(__file__).resolve().parents[1]/"data/presentation"
-    report={"status":"failed","source":"recorded laptop video, not ESP32 camera"}
+    out=args.output or Path(__file__).resolve().parents[1]/"data/presentation"/("validation_"+datetime.now().strftime("%Y%m%d_%H%M%S_%f"))
+    out.mkdir(parents=True,exist_ok=True)
+    fresh_after=datetime.now(timezone.utc).isoformat()
+    report={"status":"failed","expected_source":args.expected_source,"evidence_source":"validation_not_completed","output_directory":str(out)}
     start=time.monotonic()
     try:
         with httpx.Client(base_url=args.url,timeout=5,trust_env=False) as client:
@@ -28,7 +33,21 @@ def main():
                 except (httpx.HTTPError,KeyError,ValueError):pass
                 time.sleep(.25)
             else:raise TimeoutError("Models/video not ready; inspect launcher/worker logs")
-            assert health["source_kind"]=="video_file" and not health["esp32_camera_verified"]
+            assert health["source_kind"]==args.expected_source
+            camera_mode=args.expected_source=="esp32_camera_uart"
+            assert health["esp32_camera_verified"] is camera_mode
+            def expected_event(event):
+                metadata=event.get("source_metadata") or {}
+                if metadata.get("source_kind")!=args.expected_source:return False
+                return not camera_mode or (metadata.get("evidence_source")=="live_serial" and metadata.get("device_id")==health["source_frame"]["device_id"])
+            if camera_mode:
+                assert health["source_frame"]["evidence_source"]=="live_serial"
+                assert health["camera_validation"]["continuous_delivery"]["state"]=="observed"
+                report["evidence_source"]="live_serial_camera_browser_validation"
+            else:
+                report["evidence_source"]="live_laptop_application_not_ESP32"
+            report.update(source=health["source"],source_kind=health["source_kind"])
+            assert health.get("tracker_status")=="ready" and health.get("event_engine_status")=="ready"
             report["model_history"]=history
             first=client.get("/api/frame.jpg");first.raise_for_status()
             time.sleep(.8)
@@ -39,12 +58,17 @@ def main():
             deadline=time.monotonic()+45
             while time.monotonic()<deadline:
                 events=client.get("/api/events?limit=50").json()["events"]
-                checked=next((e for e in events if e.get("vlm_status")=="inconclusive" and e.get("vlm_raw_text")),None)
+                checked=next((e for e in events if expected_event(e) and e.get("vlm_raw_text") and (e.get("vlm_checked_at") or "")>=fresh_after and not e.get("vlm_error")),None)
                 models=client.get("/api/models").json()
                 if checked and models["vlm"].get("inference_count",0)>0:break
                 time.sleep(.3)
             else:raise TimeoutError("No actual Florence result; inspect VLM status and event errors")
             report["vlm_event"]=checked
+            evidence=Path(checked["evidence_path"])
+            assert evidence.is_file(), "Florence result lacks saved evidence"
+            response=client.get("/evidence/"+evidence.name);response.raise_for_status()
+            report["evidence_http_bytes"]=len(response.content)
+            assert client.get("/api/events/"+str(checked["id"])).status_code==200
             from playwright.sync_api import sync_playwright
             with sync_playwright() as pw:
                 browser=pw.chromium.launch(channel="msedge",headless=True)
@@ -65,6 +89,7 @@ def main():
                     assert answer["llm_used"] and answer["generation_status"]=="validated",answer
                     page.wait_for_function("document.getElementById('qa-answer').textContent.length>0",timeout=10000)
                     assert page.locator("#qa-sources li").count()>0
+                    assert answer.get("sources") and all(expected_event(e) for e in answer["sources"]), "QA sources do not match the selected camera provenance"
                     report["llm_ui_answer"]=answer
                     time.sleep(.5)
                     after=client.get("/api/health").json()["frames_processed"]

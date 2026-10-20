@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Source = "data/demo/webcam.avi",
+    # esp32 is fail-closed until independent hardware approval and live diagnostics pass.
+    [string]$Source = "0",
     [switch]$NoVLM,
     [switch]$NoLLM,
     [switch]$NoLoop,
@@ -19,5 +20,7 @@ if ($MaxSeconds -gt 0) { $launchArgs += @("--max-seconds", $MaxSeconds.ToString(
 Push-Location $projectRoot
 try {
     & $pythonExe @launchArgs
-    if ($LASTEXITCODE -ne 0) { throw "Presentation exited with code $LASTEXITCODE. Inspect the log printed above." }
+    $presentationExitCode = $LASTEXITCODE
 } finally { Pop-Location }
+# Preserve expected preflight failures without a misleading PowerShell exception.
+exit $presentationExitCode

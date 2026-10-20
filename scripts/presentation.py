@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 
-def prepare(source="data/demo/webcam.avi", *, no_vlm=False, no_llm=False, max_seconds=0, no_loop=False):
+def prepare(source="0", *, no_vlm=False, no_llm=False, max_seconds=0, no_loop=False):
     from backend.config.settings import Settings, _apply_yaml
     config_path = ROOT / "config.presentation.yaml"
     cfg = Settings(project_root=ROOT)
@@ -23,7 +23,16 @@ def prepare(source="data/demo/webcam.avi", *, no_vlm=False, no_llm=False, max_se
         raise ValueError("Presentation config must enable both AI models; use explicit opt-outs")
     if max_seconds < 0:
         raise ValueError("MaxSeconds must be nonnegative")
-    if str(source).isdigit():
+    if str(source).casefold() == "esp32":
+        from backend.camera.hardware_gate import load_approval, require_diagnostics
+        approval = load_approval(ROOT)
+        require_diagnostics(ROOT, approval)
+        selected, kind = "esp32", "esp32_camera_uart"
+    elif str(source).startswith(("http://", "https://")):
+        from urllib.parse import urlsplit
+        if not urlsplit(source).hostname:raise ValueError("MJPEG URL requires a host")
+        selected, kind = str(source), "network_mjpeg"
+    elif str(source).isdigit():
         selected = str(int(source))
         kind = "webcam"
     else:
@@ -55,13 +64,13 @@ def prepare(source="data/demo/webcam.avi", *, no_vlm=False, no_llm=False, max_se
         command.append("--loop")
     if max_seconds:
         command.extend(["--max-seconds",str(max_seconds)])
-    return dict(command=command,source=selected,source_kind=kind,serial_enabled=False,
+    return dict(command=command,source=selected,source_kind=kind,serial_enabled=(kind=="esp32_camera_uart"),
                 dashboard_url="http://127.0.0.1:"+str(cfg.api.port),warnings=warnings)
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source",default="data/demo/webcam.avi")
+    parser.add_argument("--source",default="0")
     parser.add_argument("--no-vlm",action="store_true")
     parser.add_argument("--no-llm",action="store_true")
     parser.add_argument("--no-loop",action="store_true")
@@ -72,7 +81,13 @@ def main(argv=None):
         info=prepare(args.source,no_vlm=args.no_vlm,no_llm=args.no_llm,
                      max_seconds=args.max_seconds,no_loop=args.no_loop)
     except (ValueError,ImportError,OSError) as exc:
-        print("Presentation preflight failed: "+str(exc),file=sys.stderr)
+        # Expected validation failures use stdout so Windows PowerShell does not
+        # wrap native stderr as NativeCommandError under ErrorActionPreference=Stop.
+        print("Presentation preflight failed: "+str(exc),flush=True)
+        print("Application not started; no application log was created.",flush=True)
+        if str(args.source).casefold() == "esp32":
+            print("ESP32 camera remains blocked; no other video source was opened.",flush=True)
+            print("The overheating concern requires electrical inspection before any hardware session.",flush=True)
         return 2
     if args.check:
         print(json.dumps(info,indent=2))
@@ -91,7 +106,7 @@ def main(argv=None):
     (log_dir/"presentation_latest.json").write_text(json.dumps(info,indent=2))
     print("Dashboard: "+info["dashboard_url"],flush=True)
     print("Log: "+str(log_path),flush=True)
-    print("Source: "+info["source_kind"]+" "+info["source"]+"; ESP32 serial disabled",flush=True)
+    print("Source: "+info["source_kind"]+" "+info["source"]+("; verified camera stream port selected" if info["serial_enabled"] else "; ESP32 serial disabled"),flush=True)
     print("Florence/LLM start asynchronously; inspect their status and completed-inference counters.",flush=True)
     for warning in info["warnings"]:print("WARNING: "+warning,flush=True)
     import os
@@ -101,6 +116,10 @@ def main(argv=None):
     with log_path.open("w",encoding="utf-8") as log:
         # Guard independently of configuration: this launcher never permits serial opening.
         guard="import serial,runpy; serial.Serial=lambda *a,**k: (_ for _ in ()).throw(RuntimeError('Physical serial is disabled by presentation launcher')); runpy.run_module('backend.main',run_name='__main__')"
+        if info["source_kind"] == "esp32_camera_uart":
+            # Explicit source selection plus independently verified gates permits
+            # only the receive-only camera source. Backend telemetry stays off.
+            guard="import runpy; runpy.run_module('backend.main',run_name='__main__')"
         child_command=info["command"][:3]+["-c",guard]+info["command"][5:]
         # Replace `-m backend.main`; retain the exact validated application flags.
         proc=subprocess.Popen(child_command,cwd=ROOT,env=env,stdout=subprocess.PIPE,

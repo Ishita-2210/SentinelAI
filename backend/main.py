@@ -1,16 +1,16 @@
 """
-SentinelAI — Main Application Entry Point
+SentinelAI - Main Application Entry Point
 
 Pipeline:
   Webcam / video / ESP32-CAM
-    → YOLO11n + ByteTrack  (Tracker.update(frame))
-    → Object State Manager
-    → Deterministic Event Engine
-    → Keyframe Evidence Capture
-    → SQLite Event Database
-    → Optional VLM Verification (async)
-    → FastAPI + WebSocket Server  (background thread)
-    → Dashboard  (http://localhost:8000)
+    -> YOLO11n + ByteTrack  (Tracker.update(frame))
+    -> Object State Manager
+    -> Deterministic Event Engine
+    -> Keyframe Evidence Capture
+    -> SQLite Event Database
+    -> Optional VLM Verification (async)
+    -> FastAPI + WebSocket Server  (background thread)
+    -> Dashboard  (http://localhost:8000)
 
 Usage:
     # Webcam (default)
@@ -169,6 +169,18 @@ def _draw_hud(frame, fps: float, event_count: int, track_count: int) -> None:
 
 def run(args: argparse.Namespace) -> int:
     cfg = get_settings()
+    selected_source = args.source if args.source is not None else (cfg.esp32.stream_url if cfg.esp32.enabled and cfg.esp32.mode == "stream" else cfg.camera.source)
+    esp32_approval = None
+    if str(selected_source).casefold() == "esp32":
+        from backend.camera.hardware_gate import load_approval, require_diagnostics
+        try:
+            esp32_approval = load_approval(cfg.project_root)
+            require_diagnostics(cfg.project_root, esp32_approval)
+            if cfg.esp32.enabled:
+                raise ValueError("Camera mode requires backend telemetry off to avoid serial ownership conflicts")
+        except ValueError as exc:
+            logger.error("%s", exc)
+            return 2
 
     # ---- Database ----
     db = EventDatabase(database_path=str(cfg.resolve_path(cfg.database.path)))
@@ -259,10 +271,10 @@ def run(args: argparse.Namespace) -> int:
     api_routes.update_live_state(event_engine_status="ready")
 
     # ---- Camera ----
-    source = args.source if args.source is not None else (cfg.esp32.stream_url if cfg.esp32.enabled and cfg.esp32.mode == "stream" else cfg.camera.source)
+    source = selected_source
     if isinstance(source, str) and source.isdigit():
         source = int(source)
-    elif isinstance(source, str) and not source.startswith(("http://", "https://", "rtsp://")):
+    elif isinstance(source, str) and source.casefold() != "esp32" and not source.startswith(("http://", "https://", "rtsp://")):
         source = str(cfg.resolve_path(source))
 
     camera = CameraSource(
@@ -274,6 +286,10 @@ def run(args: argparse.Namespace) -> int:
         reconnect_delay_s=cfg.camera.reconnect_delay_s,
         loop_video=args.loop,
     )
+
+    if esp32_approval is not None:
+        from backend.camera.esp32_uart import Esp32CameraSource
+        camera = Esp32CameraSource(esp32_approval)
 
     fps_counter = FPSCounter()
     total_events = 0
@@ -307,7 +323,8 @@ def run(args: argparse.Namespace) -> int:
         return 1
 
     api_routes.update_live_state(camera_ok=True, pipeline_status="running", source=str(source),
-        source_kind="webcam" if isinstance(source,int) else "video_file" if camera.is_file else "network_stream",
+        source_kind="esp32_camera_uart" if esp32_approval else "webcam" if isinstance(source,int) else "video_file" if camera.is_file else "network_stream",
+        source_label="ESP32 Camera" if esp32_approval else f"Laptop webcam {source}" if isinstance(source,int) else "Recorded video" if camera.is_file else "Network stream",
         esp32_camera_verified=False)
     from backend.api.websocket import push_frame
 
@@ -321,7 +338,9 @@ def run(args: argparse.Namespace) -> int:
         trace_path = cfg.resolve_path(args.trace)
         trace_path.parent.mkdir(parents=True, exist_ok=True)
         trace = trace_path.open("w", encoding="utf-8")
+    cleanup_error = None
     continuity_lost = False
+    last_camera_session = None
     last_media_time = -1.0
     media_offset = 0.0
     try:
@@ -332,13 +351,25 @@ def run(args: argparse.Namespace) -> int:
                 break
             ok, frame = camera.read_frame()
             if not ok:
+                if esp32_approval:
+                    transport = camera.snapshot()
+                    api_routes.update_live_state(camera_transport=transport)
+                    if transport.get("state") not in ("reconnecting", "error", "closed"):
+                        # A bounded queue wait is normal at low UART frame rates.
+                        # Session/generation changes below still reset continuity.
+                        continue
                 continuity_lost = True
                 api_routes.update_live_state(camera_ok=False, pipeline_status="reconnecting", fps=0, track_count=0)
                 if camera.is_file:
                     logger.info("Camera stream ended.")
                     break
-                continue  # transient failure — keep looping
+                continue  # transient failure - keep looping
 
+            source_metadata = dict(getattr(camera, "frame_metadata", {}))
+            camera_session = (source_metadata.get("connection_generation"), source_metadata.get("session")) if source_metadata else None
+            if camera_session is not None and camera_session != last_camera_session:
+                continuity_lost = True
+                last_camera_session = camera_session
             if continuity_lost:
                 tracker.reset()
                 state_mgr.states.clear()
@@ -356,7 +387,7 @@ def run(args: argparse.Namespace) -> int:
                 last_media_time = media_time
                 timestamp = video_origin + timedelta(seconds=media_offset + media_time)
             else:
-                timestamp = datetime.now(timezone.utc)
+                timestamp = datetime.fromisoformat(source_metadata["received_at"]) if source_metadata else datetime.now(timezone.utc)
             frames_processed += 1
 
             # ---- Detect + Track (single YOLO call with ByteTrack) ----
@@ -385,7 +416,8 @@ def run(args: argparse.Namespace) -> int:
                     logger.warning("Evidence capture failed: %s", exc)
                     evidence_path = None
 
-                event_id = db.save_event(event, evidence_path)
+                provenance = source_metadata or dict(source_kind="video_file" if camera.is_file else "webcam" if isinstance(source,int) else "network_stream", source=str(source), received_at=timestamp.isoformat())
+                event_id = db.save_event(event, evidence_path, source_metadata=provenance)
                 total_events += 1
                 persisted_events.append(retriever.get_by_id(event_id))
                 if device is not None:
@@ -441,6 +473,11 @@ def run(args: argparse.Namespace) -> int:
                 if ok_jpg:
                     api_routes.update_preview(encoded.tobytes())
 
+            if esp32_approval:
+                api_routes.update_live_state(camera_transport=camera.snapshot(),
+                    esp32_camera_verified=source_metadata.get("evidence_source")=="live_serial",
+                    source_frame=source_metadata)
+
             # ---- OpenCV display ----
             if not args.no_display:
                 _draw_tracks(frame, tracks, states)
@@ -457,7 +494,10 @@ def run(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        camera.close()
+        try:camera.close()
+        except CameraError as exc:
+            cleanup_error = str(exc)
+            logger.error("Camera shutdown failed: %s", exc)
         if trace is not None:
             trace.close()
         api_routes.update_live_state(camera_ok=False, pipeline_status="stopped", fps=0, track_count=0)
@@ -477,7 +517,7 @@ def run(args: argparse.Namespace) -> int:
             total_events,
         )
 
-    return 0
+    return 1 if cleanup_error else 0
 
 
 # ---------------------------------------------------------------------------
@@ -486,13 +526,13 @@ def run(args: argparse.Namespace) -> int:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="SentinelAI — autonomous edge intelligence pipeline"
+        description="SentinelAI - autonomous edge intelligence pipeline"
     )
     p.add_argument(
         "--source",
         default=None,
         help=(
-            "Camera source: webcam index (0, 1 …), "
+            "Camera source: webcam index (0, 1 ...), "
             "video file path, or ESP32-CAM MJPEG URL. Default: 0."
         ),
     )

@@ -126,3 +126,67 @@ def test_missing_model_cache_reports_warning_without_faking_ready(launcher_root,
     info=presentation.prepare("0")
     assert len(info["warnings"])==2
     assert "--vlm" in info["command"]
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_blocked_camera_is_actionable_without_starting_application(launcher_root, monkeypatch, capsys, check):
+    import serial
+    monkeypatch.setattr(serial, "Serial", lambda *a, **k: pytest.fail("Physical serial opened"))
+    monkeypatch.setattr(presentation.subprocess, "Popen", lambda *a, **k: pytest.fail("Application started"))
+    args = ["--source", "esp32"] + (["--check"] if check else [])
+    assert presentation.main(args) == 2
+    output = capsys.readouterr()
+    assert output.err == ""
+    assert "ESP32 camera remains blocked" in output.out
+    assert "no other video source was opened" in output.out
+    assert "-Source 0" not in output.out and "data/demo/webcam.avi" not in output.out
+    assert "no application log was created" in output.out
+    assert not (launcher_root[0] / "data/logs").exists()
+
+
+def test_other_preflight_failure_does_not_offer_camera_fallback(launcher_root, capsys):
+    assert presentation.main(["--source", "missing.avi"]) == 2
+    output = capsys.readouterr()
+    assert "Video file not found" in output.out
+    assert "-Source 0" not in output.out
+    assert output.err == ""
+
+
+def test_mjpeg_source_preflight_never_opens_network_or_serial(launcher_root,monkeypatch):
+    import cv2
+    monkeypatch.setattr(cv2,"VideoCapture",lambda *a:pytest.fail("Network opened in preflight"))
+    info=presentation.prepare("http://192.0.2.1:81/stream")
+    assert info["source_kind"]=="network_mjpeg" and not info["serial_enabled"]
+    assert "--loop" not in info["command"] and "--vlm" in info["command"]
+
+
+
+def test_explicit_esp32_never_substitutes_another_source(launcher_root,monkeypatch,capsys):
+    import cv2,serial
+    monkeypatch.setattr(cv2,"VideoCapture",lambda *a:pytest.fail("Fallback video opened"))
+    monkeypatch.setattr(serial,"Serial",lambda *a,**k:pytest.fail("Physical serial opened"))
+    monkeypatch.setattr(presentation.subprocess,"Popen",lambda *a,**k:pytest.fail("Backend started"))
+    assert presentation.main(["--source", "esp32"])==2
+    output=capsys.readouterr().out
+    assert "ESP32 camera remains blocked" in output and "no other video source was opened" in output
+
+
+@pytest.mark.parametrize("evidence,expected",[("software_fixture",False),("live_serial",True)])
+def test_camera_status_requires_matching_receiver_provenance_and_fresh_preview(clocked_preview,evidence,expected):
+    routes.update_preview(b"unit test preview, not sensor evidence")
+    routes.update_live_state(source_kind="esp32_camera_uart",esp32_camera_verified=True,
+        source_frame=dict(evidence_source=evidence),
+        camera_transport=dict(evidence_source=evidence,decoded_frames=3,decoded_span_s=6,reconnects=0),
+        frames_processed=3,tracker_status="ready")
+    assert health()["esp32_camera_verified"] is expected
+    clocked_preview[0]+=6
+    assert health()["esp32_camera_verified"] is False
+
+
+def test_camera_verified_status_flag_alone_never_proves_camera(clocked_preview):
+    routes.update_preview(b"unit test")
+    routes.update_live_state(source_kind="esp32_camera_uart",esp32_camera_verified=True)
+    result=health()
+    assert result["esp32_camera_verified"] is False
+    assert result["camera_validation"]["jpeg_reception"]["state"]=="not_decoded"
+    assert result["camera_validation"]["dashboard_preview"]["rendering"]=="requires_browser_validation"

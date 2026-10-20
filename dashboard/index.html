@@ -521,7 +521,8 @@ function renderEvents() {
         <span class="ev-time">${ts}</span>
       </div>
       <div class="ev-desc">Track #${ev.track_id} | ${esc(ev.description)}</div>
-      <div class="ev-vlm">${renderVLM(ev.vlm_answer, ev.vlm_adapter, ev.vlm_error, ev.vlm_status)}</div>
+      ${ev.source_metadata ? '<div class="ev-vlm">Source: ' + esc(ev.source_metadata.source_label || ev.source_metadata.source_kind) + ' | received: ' + esc(ev.source_metadata.received_at || '') + '</div>' : ''}
+      <div class="ev-vlm">${ev.vlm_task === '<DETAILED_CAPTION>' && !ev.vlm_error ? 'Visual observation (unverified): ' + esc(ev.vlm_raw_text || 'No readable observation') : renderVLM(ev.vlm_answer, ev.vlm_adapter, ev.vlm_error, ev.vlm_status)}</div>
       ${ev.evidence_path ? '<button class="fb verify-event" data-id="' + ev.id + '">Check saved keyframe</button>' : ''}
       ${ev.vlm_prompt ? '<details style="font-size:.7rem;color:var(--text2)"><summary>Visual model details</summary><div>' + esc(ev.vlm_model_id) + '<br>Prompt: ' + esc(ev.vlm_prompt) + '<br>Output: ' + esc(ev.vlm_raw_text || '') + '<br>Updated: ' + esc(ev.vlm_checked_at) + '</div></details>' : ''}
     </div>`;
@@ -641,7 +642,9 @@ async function pollHealth() {
     document.getElementById('st-vlm-sub').textContent = vm.error || vm.adapter_warning || (vm.adapter_loaded ? 'adapter loaded; experimental' : vm.model_id || 'disabled') + ' | completed: ' + (vm.inference_count || 0);
     document.getElementById('llm-detail').textContent = 'LLM: ' + lm.state + ' | ' + (lm.model_id || 'not configured') + (lm.error ? ' | ' + lm.error : '') + (lm.busy ? ' | generating' : '') + ' | completed: ' + (lm.inference_count || 0);
     document.getElementById('component-status').textContent = 'Camera: ' + d.camera_status + ' | YOLO: ' + d.yolo_status + ' | Tracker: ' + d.tracker_status + ' | Events: ' + d.event_engine_status + ' | SQLite: ' + d.database_status + (d.last_error ? ' | Error: ' + d.last_error : '');
-    document.getElementById('device-status').textContent = 'Source: ' + (d.source_kind || 'API/history only') + ' ' + (d.source || '') + ' | ESP32 DevKit telemetry: ' + (d.esp32_status || 'disabled') + (d.esp32_port ? ' (' + d.esp32_port + ')' : '') + ' | ESP32 camera frames: ' + (d.esp32_camera_verified ? 'verified' : 'not verified');
+    document.getElementById('device-status').textContent = 'Source: ' + (d.source_label || d.source_kind || 'API/history only') + ' ' + (d.source || '') + ' | ESP32 DevKit telemetry: ' + (d.esp32_status || 'disabled') + (d.esp32_port ? ' (' + d.esp32_port + ')' : '') + ' | ESP32 camera frames: ' + (d.esp32_camera_verified ? 'verified' : 'not verified');
+    const ct = d.camera_transport;
+    if (ct) document.getElementById('device-status').textContent += ' | Transport: ' + ct.state + ' | RX FPS: ' + Number(ct.observed_transport_fps || 0).toFixed(2) + ' | Dropped: ' + ct.dropped_frames + ' | Frame age: ' + (ct.frame_age_s == null ? 'none' : Number(ct.frame_age_s).toFixed(1) + 's') + ' | Decoded FPS: ' + Number(ct.observed_decoded_fps || 0).toFixed(2) + ' | Evidence: ' + (ct.evidence_source || 'not tested') + ' | Last frame: ' + (ct.last_frame_at || 'none') + (ct.last_error ? ' | ' + ct.last_error : '');
     if (d.event_count !== undefined)
       document.getElementById('st-total').textContent = d.event_count;
     document.getElementById('footer-ts').textContent = 'Last poll: ' + new Date().toLocaleTimeString();

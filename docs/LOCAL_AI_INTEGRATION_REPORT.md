@@ -1,4 +1,33 @@
+# Final improvement pass ? 20 October 2026
+
+See [fresh validation and limitations](FINAL_VALIDATION.md) and the [implemented analysis lifecycle](../README.md#pipeline-and-analysis-lifecycle). The official source is laptop webcam 0. The adapter prompt is preserved; base Florence now uses parsed `<DETAILED_CAPTION>` observations. VLM results retain task and exact image SHA-256, with association checks and request-error retry. SmolLM2 receives explicit missing evidence and unverified visual observations; whole-record context reduction preserves the question. Factual prose remains rendered from SQLite. Expired state/event memory, evidence filename collisions and invalid frame inputs have regression coverage.
+
+The remaining sections are historical records; their counts and operating defaults do not replace the fresh report.
+
+# Historical ESP32-only update
+
+At that earlier stage ESP32 was the default source. 246 regression tests and two reference builds passed; no physical camera stage passed. Receiver/fixture provenance, source-scoped QA, stage metrics and the future ESP32 end-to-end verifier were strengthened. See [ESP32_ONLY_STATUS.md](ESP32_ONLY_STATUS.md) for implemented versus physically observed results. Earlier laptop results below are historical and do not satisfy the ESP32-video goal.
+
 # Local AI integration and UART hardware completion report
+
+## Latest deadline validation ? current working tree
+
+The full regression suite passed **236 tests** with one upstream Starlette deprecation warning. Camera framing/error/timeout/reconnect/buffering/provenance and pipeline integration tests use generated data or injected streams; they are not physical camera evidence. The inert `esp32/camera_capture` reference build passed (22108bytes RAM,268932bytes application); no actual-camera deployment build is identified or approved. Existing telemetry was not rebuilt or flashed. All six original/recovery artifact pairs still match their recorded SHA256 values; the historical full flash copy is not a current-device readback.
+
+A60-second full-AI-enabled webcam run opened1280x720, processed real person tracks and committed10 events with10 existing evidence JPEGs. Preview sequence and bytes advanced; the headless dashboard received43 WebSocket messages without browser JavaScript errors. Models were still loading for part of this short run, so it was not counted as completed Florence inference. This run exposed a double-disconnect WebSocket traceback; the fix makes socket cleanup idempotent, and a new regression test covers it.
+
+The subsequent full-AI recorded-laptop-video validation **passed** against the existing launcher with both local models enabled:548 processed frames at verification, fresh Florence inference on saved event336 (`yes`, stored `inconclusive`, no calibrated confidence), browser-submitted SmolLM2 QA (`llm_used:true`, validated source ordering,11 generated tokens), frames506->525 during QA,35 WebSocket messages, zero browser errors, evidence served over HTTP, and preview outage/recovery. Model counters were VLM2/LLM1 at verification. Sources remained `webcam` or `video_file`, `esp32_camera_verified:false`. This is functionality validation, not accuracy validation or ESP32 proof.
+
+Code changes preserve tracking through ordinary slow-UART inter-frame waits while resetting on real reconnect/session changes; reject JPEGs while capture status reports an error; and prevent duplicate WebSocket removal. The verifier now checks source identity, fresh model results and saved evidence, and writes to an explicit/new artifact directory instead of overwriting earlier validation results.
+
+Run `& .\scripts\run_presentation.ps1 -Source 0` from D:\SentinelAI; dashboard http://127.0.0.1:8010. Explicit recorded fallback: `& .\scripts\run_presentation.ps1 -Source data/demo/webcam.avi`. Both retain Florence/SmolLM2 and independently block serial access.
+
+**Hardware hold supersedes earlier manual test instructions:** the user reports CAM became very hot during a3V3 power experiment and has no multimeter. No energizing, serial opening/transmission, GPIO reset, flash, erase or wiring action occurred in this task. Prior ESP-A loopback14/14 establishes the adapter worked in that setup; current CAM power, ROM communication, sensor PID, capture and continuous ESP32 preview remain unverified. Obtain competent unpowered inspection of the overheated CAM/regulator and power wiring before renewed physical testing. The missing build configuration is the actual carrier/FPC-to-GPIO mapping and compatible sensor assembly; AI-Thinker remains a hypothesis, not an identified target. Wi-Fi MJPEG remains the intended later video transport. No genuine ESP32 launch command is currently qualified.
+
+Both bounded application runs exited0. The final corrected run logged clean shutdown without an application/ASGI traceback, and port8010 was released. Final summary: `data/presentation/deadline_validation/summary.json`.
+
+Artifacts: `data/presentation/deadline_validation/webcam_validation.json`, `webcam_dashboard.png`, `persistence.json`, `preservation.json`, and `full_ai/real_ai_validation.json` / `dashboard_ai_enabled.png`. These private local records distinguish live laptop/model validation from simulated receiver tests.
+
 
 
 ## Current enabled-AI presentation result (supersedes earlier disabled-model defaults)
@@ -206,3 +235,21 @@ The exact tested telemetry application, source, PlatformIO configuration, bootlo
 **D. Shortest remaining path:** obtain one qualified unpowered net-map inspection covering power/UART/IO0/reset and establish one verified supply/current budget, including the second DevKit's actual rail. Then, with explicit authorization and recoverable flash snapshots, validate a temporary bridge and manual target ROM-mode/reset controls, establish ROM communication, install the UART responder and run the primary probe for a fresh nonce-matched PING/PONG with acknowledged shutdown. Using the second DevKit as a temporary programmer could preserve the primary's telemetry, but requires separately verified UART routing and intentional wire changes; that route is not currently established. After physical UART passes, verify camera mapping/sensor compatibility and implement/run initialization/PID diagnostics. JPEG transfer and host ingestion remain gated on those physical results. No separate programmer is proven necessary if the existing bridge and manual controls can be physically validated; a meter/technician and a verified power source may still be necessary.
 
 Exact safe PowerShell presentation, checker and build commands are at the top of `docs/ESP32_SETUP.md` and `docs/DEMO_GUIDE.md`. `config.presentation.yaml` disables ESP32 serial, uses a separate database/evidence directory and serves the dashboard at http://127.0.0.1:8010. The camera checker and telemetry checker are inert by default. No command declaring verified power/firmware was executed against hardware.
+
+
+## Real-time ESP32 source preparation follow-up
+
+The new requested ESP32 feed remains physically blocked. No new electrical/sensor identification evidence arrived, and the active camera firmware is still only a PING/PONG responder. Genuine sensor capture firmware is conditional on an established target/programming route and was not implemented using a guessed board map. The existing primary telemetry and camera responder source/binaries remain preserved; no serial/flash/reset/power/wiring action was performed.
+
+Host-side implementation now includes a proposed bounded/checksummed SNC1 packet decoder, sensor-status/session/sequence validation, dimension-checked JPEG decoding, a one-frame background receiver with reconnect/drop/timeout metrics, explicit gated ESP32 source selection, received-time/session/frame provenance persisted with events, dashboard transport details and a single conservative diagnostics command. Missing physical approval or fresh live evidence blocks the launcher before model/device startup. Simulation/replay cannot supply live approval.
+
+201 automated tests passed (28 new software stream/source tests), and all four existing firmware builds passed. A real recorded-video fallback check passed actual detector/events/storage/REST/WebSocket/browser/persistence with source provenance still video_file and ESP32 verification false. Optional models were not re-evaluated in this fallback check; normal presentation defaults continue enabling both. No camera PID, JPEG, continuous ESP32 video, ESP32-origin model inference or physical camera performance was verified. Exact commands, protocol boundaries, current results and the one next physical inspection item are at the top of ESP32_SETUP.md.
+
+
+## Three-board power-only secondary and capture-core update
+
+The reported power path is now explicit: USB power bank -> secondary DevKit USB -> secondary5V/GND -> camera5V/GND. Primary USB/COM9 and GPIO17/16/GND provide data. No primary positive power tie is reported. This clarifies roles, not the measured electrical limits. Reference manufacturer documentation cannot establish the actual secondary's spare5V output capacity or this camera's power/pin-map/sensor identity.
+
+An offline `esp32/camera_capture` driver core now calls initialization/PID/frame acquisition APIs and emits the receiver's framed JPEG/status protocol, with one-buffer/cap/deadline/release/error handling and framed fresh-nonce PONG responses. The included generic reference entry point is inert; no hardware pin map or production camera image is supplied. A gated runtime controller reuses the unchanged primary binary bridge in normal camera boot, suspends legacy telemetry during raw transport, checks a fresh camera PONG and uses acknowledged shutdown. Its30-second silence /15-minute session /about32-second cleanup constraints remain explicit. Primary telemetry source/binary and backup were preserved; no MCU was flashed or reset.
+
+210 regression tests and five compile-only builds passed (four existing targets plus the inert capture reference). OS-only enumeration found COM9 without opening it. No camera response, PID, JPEG, continuous camera video or model inference on ESP32-origin frames was physically verified; camera FPS/resolution/stability remain unmeasured. The six-stage diagnostic and exact safe commands are documented at the top of ESP32_SETUP.md. Existing successful laptop/model tests were not repeated as substitute camera evidence.

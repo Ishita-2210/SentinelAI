@@ -1,5 +1,5 @@
 """
-SentinelAI — WebSocket live stream
+SentinelAI - WebSocket live stream
 
 Endpoint: ws://localhost:8000/ws/stream
 
@@ -46,6 +46,8 @@ class ConnectionManager:
         logger.info("WebSocket client connected. Total: %d", len(self._connections))
 
     def disconnect(self, ws: WebSocket) -> None:
+        if ws not in self._connections:
+            return  # A failed broadcast may already have removed this socket.
         self._connections.remove(ws)
         logger.info("WebSocket client disconnected. Total: %d", len(self._connections))
 
@@ -55,21 +57,20 @@ class ConnectionManager:
             return
         text = json.dumps(data, default=str)
         dead: list[WebSocket] = []
-        for ws in self._connections:
+        for ws in tuple(self._connections):
             try:
                 await ws.send_text(text)
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            if ws in self._connections:
-                self._connections.remove(ws)
+            self.disconnect(ws)
 
     @property
     def connection_count(self) -> int:
         return len(self._connections)
 
 
-# Module-level manager — shared by the routes and the detection loop
+# Module-level manager - shared by the routes and the detection loop
 manager = ConnectionManager()
 
 

@@ -188,6 +188,26 @@ async def get_health() -> JSONResponse:
                 database_status="ready" if data.get("event_count",-1)>=0 else "error")
     data["yolo_status"]="ready" if data["model_loaded"] else "error" if data.get("pipeline_status")=="model_error" else "loading" if data.get("pipeline_status")=="starting" else "disabled"
     data.update(preview_status())
+    if data.get("source_kind") == "esp32_camera_uart":
+        transport = data.get("camera_transport") or {}
+        frame = data.get("source_frame") or {}
+        physical = (transport.get("evidence_source")=="live_serial"
+                    and frame.get("evidence_source")=="live_serial"
+                    and transport.get("decoded_frames",0)>0)
+        # A standalone status flag cannot establish frame origin or freshness.
+        data["esp32_camera_verified"] = bool(physical and data["frames_arriving"])
+        data["camera_validation"] = {
+            "evidence_source":transport.get("evidence_source","not_tested"),
+            "serial_access":{"state":"opened" if transport.get("serial_opened") else "not_opened"},
+            "camera_communication":{"state":"matched_pong" if transport.get("camera_responder_verified") else "capture_status_received" if transport.get("sensor_pid_reported") else "not_reported"},
+            "sensor_initialization":{"state":transport.get("camera_initialization_reported") or "not_reported","pid":transport.get("sensor_pid_reported"),"evidence":"device_report"},
+            "jpeg_reception":{"state":"decoded" if transport.get("decoded_frames",0) else "not_decoded","received":transport.get("frames_received",0),"decoded":transport.get("decoded_frames",0)},
+            "continuous_delivery":{"state":"observed" if physical and transport.get("decoded_frames",0)>=3 and transport.get("decoded_span_s",0)>=5 and transport.get("reconnects",0)==0 and data["frames_arriving"] else "not_verified","fps":transport.get("observed_decoded_fps"),"frame_age_s":transport.get("frame_age_s"),"dropped":transport.get("dropped_frames",0)},
+            "dashboard_preview":{"state":"generated" if physical and data["frames_arriving"] else "not_verified","rendering":"requires_browser_validation"},
+            "detector_tracker":{"state":"processing" if physical and data["frames_arriving"] and data.get("tracker_status")=="ready" and data.get("frames_processed",0)>0 else "not_verified","processed_frames":data.get("frames_processed",0)},
+            "evidence_and_local_ai":{"state":"requires_event_provenance_and_inference_validation"}}
+    else:
+        data["esp32_camera_verified"] = False
     pipeline = data.get("pipeline_status", "history_only")
     data["camera_status"] = ("ready" if data["frames_arriving"] else
         "degraded" if data["camera_ok"] else "error" if pipeline=="source_error" else
@@ -208,13 +228,22 @@ async def get_event_types() -> JSONResponse:
     return JSONResponse(content={"event_types": KNOWN_EVENT_TYPES})
 
 
+
+def _camera_event_scope():
+    if _live_state.get("source_kind") != "esp32_camera_uart":return {}
+    # No frame/device identity yet means no event can qualify, even if old camera
+    # records exist. This scope is never used to attest physical image origin.
+    return dict(source_kind="esp32_camera_uart",evidence_source="live_serial",
+                source_device_id=(_live_state.get("source_frame") or {}).get("device_id") or "")
+
+
 @router.post("/llm/query", summary="Ask about retrieved events using a local Hugging Face model")
 async def llm_query(body: LLMQueryRequest) -> JSONResponse:
     import asyncio
     from backend.llm.assistant import recorded_answer
     try:
         events, filters = _get_retriever().for_question(
-            body.question,limit=body.limit,event_type=body.event_type)
+            body.question,limit=body.limit,event_type=body.event_type,**_camera_event_scope())
     except ValueError as exc:
         raise HTTPException(422,str(exc))
     if _llm is None:
@@ -236,6 +265,10 @@ async def verify_event(event_id: int):
     from backend.config.settings import get_settings
     event = _get_retriever().get_by_id(event_id)
     if event is None:raise HTTPException(404,"Event not found")
+    scope=_camera_event_scope()
+    metadata=event.get("source_metadata") or {}
+    if scope and any(metadata.get(key)!=value for key,value in (("source_kind",scope["source_kind"]),("device_id",scope["source_device_id"]),("evidence_source",scope["evidence_source"]))):
+        raise HTTPException(409,"Event is not live-serial evidence from the selected ESP32 camera")
     if _ai is None or not _ai.cfg.vlm.enabled:
         raise HTTPException(503,"VLM disabled; launch with --vlm")
     if not event.get("evidence_path"):raise HTTPException(422,"Event has no saved evidence")
@@ -245,6 +278,7 @@ async def verify_event(event_id: int):
         raise HTTPException(422,"Saved evidence is unavailable in the configured evidence directory")
     status=_ai.enqueue_event(event_id,event["event_type"],str(path),event["class_name"],event["zone"],force=True)
     if status in {"queue_full","error","stopped"}:raise HTTPException(503,status)
+    if status in {"evidence_missing","evidence_mismatch","event_missing"}:raise HTTPException(422,status)
     return JSONResponse(status_code=202,content={"event_id":event_id,"verification_status":status})
 
 @router.get("/frame.jpg", summary="Latest annotated host frame")

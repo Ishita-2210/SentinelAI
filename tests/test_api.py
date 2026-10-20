@@ -1,6 +1,6 @@
 # tests/test_api.py
 """
-Tests for the FastAPI application — no camera, no model loading.
+Tests for the FastAPI application â€” no camera, no model loading.
 Uses TestClient to verify routes without a running server.
 """
 import pytest
@@ -106,3 +106,22 @@ def test_llm_query_without_llm(client):
     assert r.status_code == 200
     data = r.json()
     assert "answer" in data
+
+
+
+def test_websocket_disconnect_after_failed_broadcast_is_idempotent():
+    import asyncio
+    from backend.api.websocket import ConnectionManager
+    class ClosedSocket:
+        async def accept(self):pass
+        async def send_text(self,text):raise RuntimeError("peer closed")
+    async def exercise():
+        manager=ConnectionManager();socket=ClosedSocket()
+        await manager.connect(socket)
+        await manager.broadcast(dict(type="frame"))
+        assert manager.connection_count==0
+        # Endpoint finally/exception cleanup can follow broadcast pruning.
+        manager.disconnect(socket)
+        manager.disconnect(socket)
+        assert manager.connection_count==0
+    asyncio.run(exercise())

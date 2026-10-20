@@ -132,8 +132,9 @@ class ModelProcess:
                 raise ModelUnavailable(self._error)
             if result.get("error"):
                 self._last_inference_error = result["error"]
-                self._fail("Inference failed: "+result["error"])
-                raise ModelUnavailable(self._error)
+                # A bad image/request does not unload a healthy worker. Keep
+                # timeouts/process exits fatal, but permit corrected evidence retry.
+                raise ModelUnavailable("Inference failed: "+result["error"])
             self._last_inference_error = None
             self._inference_count += 1
             self._last_inference_at = time.time()

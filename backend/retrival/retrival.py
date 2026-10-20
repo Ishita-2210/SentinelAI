@@ -8,6 +8,7 @@ FastAPI's JSON response machinery without additional adaptation.
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from backend.database.event_database import EventDatabase
@@ -18,8 +19,13 @@ logger = logging.getLogger(__name__)
 def _row_to_dict(row) -> dict[str, Any]:
     """Convert a sqlite3.Row to a plain dict."""
     result = dict(zip(row.keys(), tuple(row)))
+    if result.get("source_metadata"):
+        try:result["source_metadata"] = json.loads(result["source_metadata"])
+        except (ValueError,TypeError):result["source_metadata"] = None
     result["vlm_confidence"] = None
-    result["vlm_scope"] = "still-image presence only; temporal event is deterministic"
+    result["vlm_scope"] = ("model-generated still-image caption; temporal event is deterministic"
+        if result.get("vlm_task") == "<DETAILED_CAPTION>" else
+        "still-image presence only; temporal event is deterministic")
     return result
 
 

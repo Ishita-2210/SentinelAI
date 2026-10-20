@@ -1,5 +1,9 @@
 # Direct local VLM and LLM integration
 
+Current presentation: `& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0`, http://127.0.0.1:8010, both models enabled. Direct backend examples below use the separate default configuration/port. See [fresh validation](FINAL_VALIDATION.md).
+
+Florence retains the trained adapter's question format. Base-model operation now uses parsed `<DETAILED_CAPTION>` observations and keeps the presence answer unknown. Results retain task and evidence SHA-256; corrupt image/request failures can retry in the same loaded worker. Timeouts and process exits still require a restart. SmolLM2 receives bounded records with missing-evidence and unverified-observation context; whole-record reduction preserves the question rather than silently truncating it. The application renders factual answers from SQLite.
+
 ## Audit and model choice
 VLM was intentionally disabled by config.yaml and the previous --no-vlm command because the adapter was weak and Transformers 5.17 could not load the cached Florence remote implementation. Previous evaluation proved it could run under Transformers 4.49.0. An adapter exists at backend/vlm/models/sentinel-vqa-v1/best and loaded successfully in the integrated worker.
 
@@ -86,5 +90,7 @@ SQLite retrieval applies event, ID and time filters first. The small LLM generat
 ```powershell
 & .\.venv\Scripts\python.exe scripts/smoke_local_models.py
 & .\.venv\Scripts\python.exe scripts/verify_local_ai.py
+# Independent synthetic-record contracts with a real authorized local keyframe:
+& .\.venv\Scripts\python.exe scripts/evaluate_ai_grounding.py --base --image 'C:\path\to\keyframe.jpg'
 ```
 These explicitly load real weights; ordinary pytest tests use mock IPC/model results. The full check uses port 8004 and a repeated-photo integration video, not the ESP32 camera. Actual results and screenshot: data/integration/end_to_end.json and dashboard_local_ai.png. Local worker diagnostics are in data/logs. The initial unconstrained output was rejected; the final constrained API and dashboard generations passed.

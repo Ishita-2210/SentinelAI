@@ -1,5 +1,6 @@
 """Event-triggered VLM queue and direct local LLM lifecycle."""
 import itertools
+import hashlib
 from pathlib import Path
 import queue
 import threading
@@ -38,9 +39,21 @@ class AIManager:
         if self._stopped.is_set():return "stopped"
         if not force and event_type not in self.cfg.vlm.event_types:return "not_selected"
         prompt=get_verification_question(event_type,class_name,zone)
+        event = self.db.get_event_by_id(event_id)
+        if event is None:
+            return "event_missing"
+        if event["evidence_path"] and evidence_path and Path(event["evidence_path"]).resolve() != Path(evidence_path).resolve():
+            return "evidence_mismatch"
         if not evidence_path or not Path(evidence_path).is_file():
             self.db.set_verification(event_id,"error",prompt,self.cfg.vlm.base_model_id,error="Evidence image unavailable")
             return "evidence_missing"
+        try:
+            digest = hashlib.sha256(Path(evidence_path).read_bytes()).hexdigest()
+        except OSError as exc:
+            self.db.set_verification(event_id,"error",prompt,self.cfg.vlm.base_model_id,error=f"Evidence read failed: {exc}")
+            return "evidence_missing"
+        if not force and event["vlm_status"] == "inconclusive" and event["vlm_evidence_sha256"] == digest:
+            return "already_verified"
         if self.vlm.snapshot()["state"]=="error":
             self.db.set_verification(event_id,"error",prompt,self.cfg.vlm.base_model_id,error=self.vlm.snapshot()["error"])
             return "error"
@@ -50,7 +63,7 @@ class AIManager:
             self.db.set_verification(event_id,"queued",prompt,self.cfg.vlm.base_model_id)
             try:
                 priority=0 if event_type=="UNATTENDED_OBJECT" else 1 if event_type=="LOITERING" else 2
-                self._queue.put_nowait((priority,next(self._sequence),event_id,str(evidence_path),prompt))
+                self._queue.put_nowait((priority,next(self._sequence),event_id,str(evidence_path),prompt,digest))
                 return "queued"
             except queue.Full:
                 self._pending.discard(event_id)
@@ -59,15 +72,19 @@ class AIManager:
 
     def _worker(self):
         while not self._stopped.is_set():
-            try:_,_,event_id,path,prompt=self._queue.get(timeout=.2)
+            try:_,_,event_id,path,prompt,digest=self._queue.get(timeout=.2)
             except queue.Empty:continue
             try:
-                result=self.vlm.request(dict(image_path=path,question=prompt),wait_loading=True)
+                result=self.vlm.request(dict(image_path=path,question=prompt,evidence_sha256=digest),wait_loading=True)
+                event = self.db.get_event_by_id(event_id)
+                if event is None or (event["evidence_path"] and Path(event["evidence_path"]).resolve() != Path(path).resolve()):
+                    raise ValueError("Event evidence association changed during inference")
                 if not self._stopped.is_set():
                     # Answers are uncalibrated hypotheses, never a proof of temporal activity.
                     self.db.set_verification(event_id,"inconclusive",prompt,result["model_id"],
                         answer=result["answer"],raw_text=result["raw_text"],
-                        adapter_loaded=result["adapter_loaded"])
+                        adapter_loaded=result["adapter_loaded"],task=result.get("task","adapter_vqa"),
+                        evidence_sha256=result.get("evidence_sha256",digest))
             except Exception as exc:
                 if not self._stopped.is_set():
                     self.db.set_verification(event_id,"error",prompt,self.cfg.vlm.base_model_id,error=str(exc))

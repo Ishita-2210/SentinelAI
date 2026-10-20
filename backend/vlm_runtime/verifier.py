@@ -80,6 +80,7 @@ class VerificationResult:
     confidence: float | None
     adapter_loaded: bool
     error: str | None = None
+    task: str = "adapter_vqa"
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +98,9 @@ class VisualVerifier:
     """
     Florence-2 based visual verification for SentinelAI event candidates.
 
-    The verifier answers yes/no/unknown questions about a still image.
+    The trained adapter answers yes/no/unknown questions about a still image.
+    The public base model instead produces a supported detailed-caption task;
+    its normalized presence answer remains unknown.
     It is designed to be invoked on event-triggered keyframes only, not
     on every frame from the camera.
 
@@ -275,7 +278,7 @@ class VisualVerifier:
         Run visual verification on an image.
 
         Args:
-            image:    PIL.Image, numpy ndarray (BGR or RGB), or a path string/Path.
+            image:    PIL.Image, uint8 HxWx3 numpy ndarray (BGR), or a path string/Path.
             question: A yes/no question about the visual content.
 
         Returns:
@@ -317,7 +320,10 @@ class VisualVerifier:
     def _run_inference(self, pil_image, question: str) -> VerificationResult:
         """Internal inference — only called with a valid PIL.Image."""
         torch = self._torch
-        prompt = self.prompt_template.format(question=question.strip())
+        # The custom adapter was trained on yes/no questions. The public base
+        # model supports task tokens, not arbitrary visual question answering.
+        task = "adapter_vqa" if self._adapter_loaded else "<DETAILED_CAPTION>"
+        prompt = self.prompt_template.format(question=question.strip()) if self._adapter_loaded else task
 
         # Processor returns pixel_values, input_ids, attention_mask
         inputs = self._processor(
@@ -339,20 +345,31 @@ class VisualVerifier:
             generated_ids = self._model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs.get("pixel_values"),
-                max_new_tokens=self.max_new_tokens,
+                max_new_tokens=self.max_new_tokens if self._adapter_loaded else max(64, self.max_new_tokens),
                 num_beams=1,
                 do_sample=False,
             )
 
         raw_text = self._processor.batch_decode(
-            generated_ids, skip_special_tokens=True
+            generated_ids, skip_special_tokens=self._adapter_loaded
         )[0]
 
+        if not isinstance(raw_text, str) or not raw_text.strip():
+            raise ValueError("Florence returned empty or malformed text")
+        if not self._adapter_loaded:
+            parsed = self._processor.post_process_generation(
+                raw_text, task=task, image_size=pil_image.size)
+            observation = parsed.get(task) if isinstance(parsed, dict) else None
+            if not isinstance(observation, str) or not observation.strip():
+                raise ValueError("Florence caption result is missing readable observations")
+            raw_text = observation.strip()
+
         return VerificationResult(
-            answer=normalize_answer(raw_text),
+            answer=normalize_answer(raw_text) if self._adapter_loaded else "unknown",
             raw_text=raw_text.strip(),
             confidence=None,  # not fabricated
             adapter_loaded=self._adapter_loaded,
+            task=task,
         )
 
     # ------------------------------------------------------------------
@@ -378,10 +395,14 @@ class VisualVerifier:
             path = Path(image)
             if not path.exists():
                 raise FileNotFoundError(f"Image file not found: {path}")
-            return PILImage.open(path).convert("RGB")
+            with PILImage.open(path) as opened:
+                opened.load()
+                return opened.convert("RGB")
 
         if isinstance(image, np.ndarray):
             import cv2
+            if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3 or image.size == 0:
+                raise ValueError("Expected a nonempty uint8 HxWx3 BGR image")
             # OpenCV uses BGR — convert to RGB
             rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             return PILImage.fromarray(rgb)

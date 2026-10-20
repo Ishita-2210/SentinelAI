@@ -1,15 +1,19 @@
+> Official presentation: `& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0`, dashboard http://127.0.0.1:8010. See [fresh validation](FINAL_VALIDATION.md). ESP32 camera is experimental and excluded from the presentation.
+
 # Demonstration guide - Windows PowerShell
 
-The normal presentation launcher enables both local models, disables ESP32 serial, validates its video/configuration, and logs to `data/logs/presentation_*.log`. Florence and SmolLM2 run in local managed Python workers, not Ollama. No inference server or cloud credentials are needed. The dashboard is http://127.0.0.1:8010.
+Current hardware status: CAM reportedly overheated during a 3V3 power experiment. Keep the camera/DevKit assembly unpowered; use the laptop demo below. No serial test, supply swap or firmware upload is part of this presentation procedure. Electrical inspection must precede renewed CAM testing.
+
+The launcher defaults to laptop webcam 0; explicit ESP32 mode retains its physical prerequisites. It enables both local models when startup qualifies, and logs successful application starts to `data/logs/presentation_*.log`. Florence and SmolLM2 run in local managed Python workers, not Ollama. No inference server or cloud credentials are needed. The dashboard is http://127.0.0.1:8010.
 
 ```powershell
 Set-Location D:\SentinelAI
 & .\scripts\run_presentation.ps1
-# Alternatively, use the laptop webcam:
+# Official full-AI presentation command:
 & .\scripts\run_presentation.ps1 -Source 0
 ```
 
-Run one command at a time. The default is the recorded laptop video `data/demo/webcam.avi`, looped and explicitly labelled `video_file`; source0 selects the actual webcam. Ctrl+C stops the foreground launcher. Actual preview frames refresh separately from event evidence. The preview hides stale/unavailable images and distinguishes a connected WebSocket from arriving frames. Model pills show loading/error/ready, error messages and completed-inference counters; ready alone means weights loaded, not inference validated. The event list shows genuine Florence outputs and the QA form performs genuine local LLM inference when ready. The small LLM selects retrieved source IDs; factual prose comes from SQLite. Florence's presence output remains uncalibrated/inconclusive for temporal event verification.
+Run one command at a time. The default is webcam `0`, with no automatic source fallback. Explicit `-Source data/demo/webcam.avi` selects recorded video and `-Source 0` selects the laptop webcam; neither qualifies as ESP32 footage. Ctrl+C stops the foreground launcher. Actual preview frames refresh separately from event evidence. The preview hides stale/unavailable images and distinguishes a connected WebSocket from arriving frames. Model pills show loading/error/ready, error messages and completed-inference counters; ready alone means weights loaded, not inference validated. The event list shows genuine Florence outputs and the QA form performs genuine local LLM inference when ready. The small LLM selects retrieved source IDs; factual prose comes from SQLite. Florence adapter presence output or base-model captions remain uncalibrated/inconclusive for temporal event verification.
 
 Preflight and an explicitly reduced mode are available:
 ```powershell
@@ -126,3 +130,46 @@ For the full real-inference/browser check, start the launcher with `-MaxSeconds 
 ```
 
 This attaches to port8010; it does not start a second backend or open serial. It checks changing JPEG bytes/sequence, a real Florence event result, browser-submitted local LLM generation, continued video processing during QA, WebSocket delivery and browser-only preview failure/recovery. The deliberate404 preview outage is a test, not a real camera failure. Results: `data/presentation/real_ai_validation.json` and `dashboard_ai_enabled.png`. Ordinary regression tests remain simulations.
+
+
+## Explicit ESP32 camera mode (currently blocked)
+
+```powershell
+& .\.venv\Scripts\python.exe scripts/check_esp32_camera.py
+& .\scripts\run_presentation.ps1 -Source esp32 -Check
+```
+
+Both currently report missing physical prerequisites without opening COM9. `-Source esp32` never silently selects a laptop/webcam/video fallback. The camera UART responder is not capture firmware; the proposed host stream protocol has only software validation. See the current stage report at the top of ESP32_SETUP.md. No supply, flash or active probe command is approved by this preparation.
+
+
+A blocked ESP32 preflight exits with code 2 before application startup; it creates no application log. This is a hardware prerequisite failure, not evidence of a defective camera. The PowerShell wrapper preserves the exit code without an extra exception stack trace. To present with an explicitly selected alternative source:
+
+```powershell
+& .\scripts\run_presentation.ps1 -Source 0
+# Or replay the existing local demo clip:
+& .\scripts\run_presentation.ps1 -Source "data/demo/webcam.avi"
+```
+
+Open http://127.0.0.1:8010 after successful startup. These alternatives keep ESP32 serial disabled and do not verify the ESP32 camera. A real application run prints its actual log path; no log is promised for a blocked preflight.
+
+
+## Deadline validation and quick start
+
+```powershell
+Set-Location D:\SentinelAI
+& .\scripts\run_presentation.ps1 -Source 0
+```
+
+This selects the **laptop webcam**, with both Florence-2 and SmolLM2 enabled and ESP32 serial access independently blocked. Open http://127.0.0.1:8010. Allow model loading; a ready pill means loaded, while a completed-inference counter and event/QA output establish actual use. Do not run a second server on8010. Ctrl+C stops the foreground application.
+
+If another application owns the webcam, explicitly use the preserved recorded laptop video, with the same enabled AI models:
+
+```powershell
+& .\scripts\run_presentation.ps1 -Source data/demo/webcam.avi
+```
+
+The file source is labelled `video_file`; its short loop generates repeated entry events and is a software demonstration, not ESP32 footage. No automatic source substitution occurs. Webcam preview/browser validation artifacts are in `data/presentation/deadline_validation/`; the full-AI recorded-video report/screenshot are in its `full_ai/` subdirectory. These are private local artifacts.
+
+The receiver core now preserves tracking across normal inter-frame UART waits and rejects JPEG packets while capture reports an error. A real reconnect/session change still resets continuity. WebSocket cleanup is idempotent after a failed broadcast. These fixes have automated tests; no camera-origin frame was supplied. No deployable actual-camera target can be declared until its carrier/FPC-to-GPIO mapping and electrical health are established; the hypothesis build is not identification.
+
+Current final checks:236 regression tests passed; the inert capture reference compiled. Live webcam/detection/events/evidence/dashboard checks passed, followed by a full recorded-video Florence/SmolLM2/browser check. See LOCAL_AI_INTEGRATION_REPORT.md for exact evidence and limits. No ESP32-origin stream is verified.

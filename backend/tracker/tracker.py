@@ -77,6 +77,7 @@ class Tracker:
             List of Track objects with persistent track_ids.
             Returns empty list if no tracks.
         """
+        self._validate_frame(frame)
         results = self.model.track(
             frame,
             persist=True,
@@ -127,6 +128,7 @@ class Tracker:
         Run detection without tracking (no track IDs).
         Used by the Detector wrapper for backward compatibility.
         """
+        self._validate_frame(frame)
         results = self.model(
             frame,
             conf=self.confidence_threshold,
@@ -135,6 +137,8 @@ class Tracker:
             verbose=False,
         )
         detections: list[Detection] = []
+        if not results or results[0].boxes is None:
+            return detections
         for box in results[0].boxes:
             class_id = int(box.cls[0])
             x1, y1, x2, y2 = box.xyxy[0].tolist()
@@ -145,3 +149,8 @@ class Tracker:
                 bounding_box=BoundingBox(x1=x1, y1=y1, x2=x2, y2=y2),
             ))
         return detections
+
+    @staticmethod
+    def _validate_frame(frame):
+        if not isinstance(frame, np.ndarray) or frame.dtype != np.uint8 or frame.ndim != 3 or frame.shape[2] != 3 or not frame.size:
+            raise ValueError("YOLO requires a nonempty uint8 HxWx3 BGR frame")

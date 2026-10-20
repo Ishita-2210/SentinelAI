@@ -1,4 +1,167 @@
+**ESP32 camera integration is experimental. Physical sensor initialization, firmware flashing, genuine JPEG reception, continuous video, dashboard display, and AI processing of real ESP32-origin frames have not been verified end to end.**
+
+Official presentation: laptop webcam via `& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0`. Keep the hardware unpowered; the instructions below are retained for future separately authorized work after electrical inspection.
+
+> Current ESP32-only source selection, validation and hardware status: [ESP32_ONLY_STATUS.md](ESP32_ONLY_STATUS.md). The current default is laptop webcam 0; ESP32 requires explicit selection. The overheating hold remains active.
+
+> **Current hardware hold:** the user reports CAM became very hot during a 3V3 power experiment and has no multimeter. Keep the camera/DevKit assembly unpowered pending competent electrical inspection. All earlier manual serial/ROM/flash/reset and supply-comparison instructions below are suspended for the current assembly. No new hardware action is authorized by the presentation work. A prior adapter loopback passed, but CAM power, ROM, sensor and JPEG remain unverified.
+
+# Current baseline: ESP-A EN-low direct USB-UART (supersedes old relay plans)
+
+Read [ESP32_FIRST_JPEG.md](ESP32_FIRST_JPEG.md) for the current seven reported connections, the corrected GPIO3/RX0 -> CAM U0R and GPIO1/TX0 <- CAM U0T direction, manual CAM download/reset procedure, read-only commands, hypothesis firmware and transport recommendation. ESP-A flash must not be changed for this route. The old GPIO16/17 relay is no longer the current plan. Physical ROM identification is separately authorized only through the manual chip-ID command, never tests/preflight. No camera hardware operation has been performed in this update.
+
+The user-reported corrected adapter wiring supersedes the previous reversed UART pair. ESP-A GND goes to ESP-B GND; ESP-B GND goes to CAM GND. ESP-A EN is grounded; CAM IO0 is grounded for manual download only; ESP-B5V remains CAM's sole reported supply. The previous COM9 chip-ID run returned no serial data and skipped flash-ID. That failure did not establish its cause; corrected wiring has not yet been tested successfully. The ranked failure checklist and optional isolated ESP-A loopback are in Section4 of the current handoff. No new hardware operation was performed.
+
+## Archived earlier handoff (historical wiring and results below)
+
+> Immediate physical sequence: see [the ordered first-JPEG handoff](ESP32_FIRST_JPEG.md#immediate-ordered-physical-sequence-follow-up-inspection). First measure the actual camera 5V-to-regulator-input path with all sources disconnected; then qualify the secondary supply and manual camera IO0/reset controls. UART-only PING/PONG can precede camera FPC identification. No new hardware evidence or deployment pin map is available.
+
+> Latest first-JPEG handoff: [ESP32_FIRST_JPEG.md](ESP32_FIRST_JPEG.md). The checker now saves exact received JPEG bytes and can stop after one frame. 217 automated tests and five offline builds passed; camera programming/PID/JPEG/continuous video remain physically unverified. Existing telemetry recovery hashes were checked; no serial port was opened. Earlier counts below are historical.
+
 # ESP32 UART camera integration: verified stages and remaining gates
+
+## Latest three-board circuit and offline capture implementation
+
+This update uses the user's newly explicit wiring and supersedes earlier ambiguity about the secondary DevKit. The secondary is **power only**; no camera UART is assigned to it. The primary is the USB/COM9 data path.
+
+| Reported path | Evidence and conclusion |
+|---|---|
+| Power bank USB -> secondary USB -> secondary5V -> camera5V | Reported physical connection, not a verified output rating or measured camera voltage |
+| Secondary GND -> camera GND; primary GND -> camera GND | A common reference is reported; ground offsets, return-current paths and backfeed are not measured |
+| Primary GPIO17/TX2 -> camera U0R; camera U0T -> primary GPIO16/RX2 | Correct intended crossed data direction; primary WROOM UART2 software mapping is explicit; actual camera header route remains unmeasured |
+| Primary USB -> laptop | Windows currently enumerates COM9; no application opened it in this task |
+
+No primary5V-to-camera or primary5V-to-secondary5V positive wire is reported. That is a circuit inference from the supplied wiring, not a continuity measurement. No wires were changed and no new supply was connected. User-reported energization from the power bank is not a measured safe power state.
+
+### Specific electrical findings
+
+DFRobot's DFR0602 reference specifies5V and operating currents of180mA with flash off /310mA at maximum flash brightness. Those are reference operating figures, not a startup-peak budget for this unidentified sensor/carrier or a rating for the secondary DevKit's5V output. The DFR0602 page describes OV2640 JPEG support; the user's apparent OV3660 ribbon label does not identify an equivalent board/sensor assembly. No actual sensor PID or current has been read.
+
+Espressif's DevKitC V4 guide lists USB,5V-header and3V3-header supply options; its schematic distinguishes USB VBUS, the5V rail and the3.3V regulator. It does not identify the user's secondary board or specify this unit's spare output current. Do not estimate a5V pass-through budget from the3.3V LDO's advertised current. If a USB-derived5V path is confirmed, its cable, protection diode/fuse, connector, PCB/header and wiring limits plus the secondary's own consumption must all be included. Neither the actual secondary model nor bank rating/path has been verified here.
+
+Sources: [DFRobot DFR0602 specifications](https://wiki.dfrobot.com/dfr0602/), [Espressif DevKitC V4 guide](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32/esp32-devkitc/user_guide.html), [DevKitC V4 reference schematic](https://dl.espressif.com/dl/schematics/esp32_devkitc_v4_sch.pdf). These establish reference designs, **not this three-board circuit's as-built identity**.
+
+The exact remaining electrical checks are: secondary USB-to5V-header route/protection/rating, camera5V-to-identified regulator input and output/ground paths, documented power-bank/cable/board current budget, camera UART0/IO0/reset routes and normal-boot behavior, and the actual camera pin map/ribbon compatibility. A matching manufacturer schematic/BOM may settle documented routes; otherwise obtain a qualified unpowered net-map inspection. Only after the input/source are established should a qualified controlled-load verification establish camera-rail voltage/drop and current margin. No instruction to power an unidentified input or blindly move wires is given.
+
+### Camera capture firmware is now prepared offline
+
+`esp32/camera_capture` adds driver/capture code rather than another PING-only probe. `CaptureService` accepts a separately verified `camera_config_t`, calls the real Espressif driver, reports actual initialization errors and driver-read PID, acquires actual JPEG frame buffers, emits SNC1 status/JPEG packets with sequence/session/capture time/CRC32, and returns every acquired buffer. It uses one framebuffer, a128KiB transfer cap, a decoded pixel budget, a minimum one-second capture cadence and a13-second transmit deadline. Actual resolution, quality, clock and memory location must come from the verified configuration; no pin values, PSRAM size or PID have been guessed. SDK/debug output is suppressed to avoid interleaving binary packets. Camera control accepts bounded numeric PING lines and returns framed status with the matching nonce between packets.
+
+**The only included build environment is `reference_compile_only`: a generic compiler target whose application entry point initializes neither camera nor serial. It type-checks the driver/capture core. It is not a usable capture image for the user's board and must not be flashed as one.** No physical target or pin map has been confirmed. A later physical deployment needs a private `include/verified_camera_config.h`, an actual confirmed PlatformIO target/configuration without the reference macro, and all explicit power/pin-map/programming/UART verification gates. The example header deliberately fails compilation and contains no pin assignments. Local deployment headers/configuration are ignored by Git.
+
+### Runtime data through the existing primary bridge
+
+The existing original telemetry image cannot forward images. The unchanged temporary `uart_programmer_bridge` MCU image can, in principle, be reused as an opaque runtime UART2 relay after an explicitly initiated, recoverable temporary firmware change. Camera normal boot must be independently verified; runtime capture must not assert ROM-download mode or hold IO0 low. The existing TX/RX/GND wires do not provide target IO0/reset controls for initial programming. A verified manual IO0/reset procedure may avoid purchasing a separate programmer, but those controls are still not established. No current COM9-to-camera programming route is physically proven.
+
+`backend/camera/runtime_bridge.py` now distinguishes that runtime role from the esptool programming controller. With a valid independent approval record, explicit camera mode may inspect the bridge, arm UART2, issue a fresh bounded PING and repeat it every5seconds as host-presence traffic. Matching framed camera PONG status establishes bidirectional responder evidence; JPEGs are withheld until that nonce is matched. This code never flashes, resets a target or sets boot GPIOs. The original primary telemetry source and tested binary remain preserved, not merged/overwritten.
+
+For this path the local approval adds `relay_control:"programmer_runtime_v1"` and independently justified `camera_normal_boot_verified:true` to the existing required facts. The power-only secondary is unchanged. Camera output is binary-only while the temporary bridge is raw; legacy USB telemetry is suspended, never injected into JPEG bytes. The normal laptop fallback keeps its existing serial-off policy. Direct source/controller calls also enforce approval before opening/arming real ports; injected simulation streams do not constitute physical approval.
+
+The unchanged bridge has real design limits:30-second host-silence shutdown and a15-minute absolute raw session. Cleanup stops host traffic and waits about32seconds for acknowledged UART2 release. Unconfirmed release is an error and prevents rearming. A locked bridge requires an explicitly initiated DevKit reset before a new session; no automatic reset is implemented. These are software limits, not measured physical stability. The camera keeps publishing periodic framed status, so a later valid receiver can resynchronize; receiver startup allows one partial plus one complete frame before declaring timeout. A programming/physical identity failure never triggers a false fallback.
+
+### Six distinct diagnostic stages
+
+```powershell
+Set-Location D:\SentinelAI
+# OS metadata only: no serial open, no DTR/RTS change and no transmission.
+& .\.venv\Scripts\python.exe scripts/check_esp32_camera.py --list-ports
+# Explicit camera preflight: currently fails closed before any device access.
+& .\scripts\run_presentation.ps1 -Source esp32 -Check
+# New firmware's inert REFERENCE build only; do not upload its image.
+& .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/camera_capture
+```
+
+The checker now separates power/hardware prerequisites, OS COM availability/access, matched responder communication, device-reported initialization/PID, first decoded JPEG, and sustained delivery/FPS/resolution. OS enumeration currently finds COM9; responder/init/JPEG remain untested. `--list-ports` never constructs `serial.Serial`. Default mode remains inert. Live diagnosis still requires explicit user action and all independent power/route/firmware approvals; no live diagnosis was run here.
+
+A preflight `physical_origin_confirmed` declaration means the operator has identified the actual board and UART route; it does not manufacture image proof. First-JPEG/sustained stages stay false until genuine received bytes are validated and decoded. Simulated or saved-file evidence cannot enable the camera launcher. Live capture must later be checked against a changing physical target, excluding laptop/webcam/video inputs.
+
+### Current task result
+
+210 regression tests passed, including37 stream/source/controller tests, and all four existing firmware builds plus the new inert capture reference build passed. Driver compilation and fake streams do not establish a camera image. Only read-only OS COM metadata was obtained. No port was opened, no board flashed/erased/reset, no GPIO boot state changed and no wire/power change was performed. Primary telemetry source, tested binary, full backup and original programmer-bridge source remain hash-matched.
+
+Camera sensor PID, first actual camera JPEG, continuous ESP32 dashboard frames, ESP32-origin YOLO/tracking/VLM/LLM processing and camera FPS/resolution/stability remain unverified/unmeasured. Existing laptop modes and enabled local-model defaults were preserved; already-passed laptop/model demos were not rerun unnecessarily. Local evidence: `reported_three_board_wiring.json`, `stream_preparation/reported_wiring_diagnostic.json`, and `three_board_completion/` under `data/hardware_identification`.
+
+**One practical next physical item:** the qualified actual-board power/net-map report above, including secondary USB5V path/rating and camera IO0/reset accessibility. Then establish a fresh recoverable primary flash snapshot and an explicitly initiated programming procedure, install only correctly configured camera/temporary-bridge images, run a fresh PING/PID/JPEG diagnostic, and finally select `-Source esp32`. TX/RX/GND alone and unchanged telemetry cannot perform those missing steps.
+
+
+## Current real-time camera preparation: physical path still blocked
+
+No new hardware evidence was supplied. ESP-32S/module markings, a5V header,1117C33-family regulator marking and apparent TY-OV3660 ribbon label do not identify the carrier revision, its as-built routing or the sensor PID. The V1.6/DFR0602 drawings remain reference similarities. Actual camera5V/regulator input/output/ground, UART0, IO0 and RST/EN paths and the second DevKit's source/current/thermal budget remain unverified. VCC is not approved as an input. No supply voltage/current recommendation or new wire/pin-short instruction is authorized here.
+
+**Next single physical action:** obtain one technician's annotated **unpowered net-map and power-budget inspection report for both camera and second DevKit**. It must identify the regulator's actual lead orientation and supply path, ground/3V3, UART0 routes, IO0 and reset nodes, second-DevKit power rail/source/protection/current capacity, and the camera carrier/pin-map identity. All sources must be disconnected for resistance inspection because existing UART connections can back-feed an unpowered board. This is several independent checks in one report; one continuity beep cannot settle every boundary. Do not energize or flash to discover the pinout. The report enables the next programming decision; it does not itself prove PING/PONG, initialization or capture.
+
+### Existing firmware and programming route
+
+- `esp32/SentinelTelemetry` retains its existing USB JSON telemetry behavior and does not activate camera UART2 or capture JPEG.
+- `esp32/uart_probe` activates RX16/TX17 only after explicit enable, matches a fresh PONG and releases the pins on disable/idle. It does not relay images.
+- `esp32/camera_uart_probe` is UART0 PING/PONG only. Its `reference_esp32dev` build is a generic compiler target, not physical board identification; it configures no camera driver or sensor.
+- `esp32/uart_programmer_bridge` can forward opaque bytes in software, but does not establish target power, IO0 or reset. The existing three signal wires do not provide those controls. CH9102 DTR/RTS control the primary DevKit, not the camera. No camera programming route is physically validated.
+- The guarded HTTP-camera template is unused and cannot select an unverified pin map. No new camera capture firmware or runtime primary relay was installed or claimed. Under the requested phase order, sensor-specific capture firmware remains gated until the actual target and programming path are established.
+
+### Completed host preparation (not a working device feed)
+
+`backend/camera/uart_frames.py` defines a **proposed SNC1 protocol**, not a protocol emitted by any current firmware. It resynchronizes through boot noise, checks version/type/length/CRC, bounds memory, and expires incomplete frames. `esp32_uart.py` receives in a separate thread, keeps only the newest JPEG, validates sensor-status identity/session and JPEG dimensions, decodes real JPEG bytes, tracks gaps/replays/restarts/timeouts/reconnects and bounds cleanup/repeated decoding failure. No receiver method transmits, flashes or controls GPIO.
+
+The source implements the existing pipeline interface. Tracker/state/event history resets after source reconnection or session change. Source kind, label, camera device ID, session, frame sequence, device-relative capture microseconds and host UTC receive time travel with each decoded frame. Event/evidence records retain this metadata through one additive SQLite TEXT column, exposed as a JSON object by retrieval. The device counter is not a synchronized UTC timestamp; event time uses host receipt for this source. No event logic or model confidence policy was replaced.
+
+The dashboard can display `ESP32 Camera` and transport state, observed RX rate, drop count, last receive timestamp and errors **only in explicit, gated camera mode**. No webcam/file branch is reclassified. Existing file/webcam previews and default local models remain intact. Physical-origin confirmation is an operator responsibility; reported PID/status and checksums are not cryptographic origin attestation.
+
+### Proposed wire contract for a later verified capture producer
+
+Little-endian32-byte header: `struct <4sBBHIIQII`.
+
+| Field | Size | Meaning |
+|---|---:|---|
+| magic |4| ASCII SNC1 |
+| version |1|1 |
+| type |1|1=status,2=JPEG |
+| flags |2| must be0 |
+| boot/session ID |4| new ID after producer restart |
+| sequence |4| unsigned frame sequence, modulo2^32 |
+| capture counter |8| device-relative microseconds, not UTC |
+| payload length |4|1..2048 for status,1..131072 for JPEG |
+| CRC32 |4| zlib CRC32 of the first28 header bytes followed by payload |
+
+Type1 payload is bounded JSON: `role:"camera_capture"`, `device_id` matching the inspected physical camera, `init_status:"ready"` or an actual error, and a sensor-driver-read integer `sensor_pid` for ready status. No specific PID is assumed. Frames from another session, without initialized status, with invalid PID/CRC/JPEG, replayed sequence or regressing capture counter are rejected. Initialization errors may arrive before any JPEG and must remain visible. Firmware logs/legacy telemetry must stay outside this dedicated stream; type1 is camera status, not host telemetry. The current primary telemetry firmware is not this producer or relay.
+
+At1152008N1 the theoretical payload ceiling is11520 bytes/s before framing/overhead. A10KiB JPEG alone needs about0.89 seconds;128KiB needs about11.4 seconds. The parser/source uses a15-second deadline and a128KiB frame cap. These are design bounds, **not measured camera performance**. Actual sensor resolution, quality, RAM budget and rate cannot be selected responsibly before the actual board/sensor and initialization are verified.
+
+### Single diagnostic and explicit launcher
+
+Safe commands **run in preparation now**:
+
+```powershell
+Set-Location D:\SentinelAI
+& .\.venv\Scripts\python.exe scripts/check_esp32_camera.py
+& .\scripts\run_presentation.ps1 -Source esp32 -Check
+```
+
+Expected: Python exit2 / PowerShell preflight error, `state:"blocked"` in the diagnostic, no serial access, initialization/PID/JPEG/sustained FPS unverified, and a precise prerequisite explanation. `-Source esp32` without `-Check` also fails before model startup or serial access; it never falls back to a file/webcam. Ordinary fallback commands remain:
+
+```powershell
+& .\scripts\run_presentation.ps1 -Source 0
+& .\scripts\run_presentation.ps1 -Source data/demo/webcam.avi
+```
+
+These keep both configured local models enabled. Their frames are explicitly webcam/video input, never ESP32 footage.
+
+Future camera operation requires an independent local approval record at `data/hardware_identification/camera_stream_approval.json` and fresh live diagnostic evidence at `camera_live_diagnostics.json`. No valid record was fabricated. Approval schema1 requires actual `port`, fixed `baud:115200`, actual `camera_id` and independently verified facts named: `power_path_verified`, `supply_budget_verified`, `uart_routing_verified`, `boot_reset_verified`, `physical_ping_pong_verified`, `camera_pinmap_verified`, `capture_firmware_installed`, `dedicated_transport_verified`, `primary_telemetry_preserved`, `port_open_reset_behavior_verified`, `physical_origin_confirmed`. Operator declarations do not perform those measurements. A saved replay/simulation cannot qualify as live diagnostics. Diagnostic results must match the approved camera/port, be less than24hours old and show at least3 decoded JPEGs spanning5seconds.
+
+Only after actual inspection, programming, physical PING/PONG and initialization make every prerequisite true, an explicit user command may opt into receive-only diagnosis:
+
+```powershell
+# CONDITIONAL FUTURE COMMAND - not run or approved for the present assembly.
+& .\.venv\Scripts\python.exe scripts/check_esp32_camera.py --run --allow-serial-open --power-verified --firmware-verified --seconds 30
+```
+
+It deasserts USB DTR/RTS before opening the independently approved port; possible driver opening/reset transients still require prior verification. It never sends a PING, so it reports that bidirectional responder stage as not tested by this command; the existing physical PING/PONG stage must have passed independently. Initialization/PID are explicitly device reports. A passed video diagnosis means decoded sustained reception, not independent electrical/sensor identity attestation. Attempted live failures replace a prior passing diagnostic record; they cannot silently reuse old success. No current firmware can produce the required packets, so approval cannot legitimately be completed in the current hardware state.
+
+### Current validation and physical result
+
+201 automated regression tests passed, including28 new software-only stream/source/gate/provenance tests. All four existing firmware projects compiled. Primary telemetry source/environment/tested app binary/full flash backup and the camera responder hashes remained unchanged. No board was flashed; COM9 was not opened; no UART, reset, wiring or power operation occurred. PID, camera JPEG, ESP32 FPS/resolution/stability, dashboard ESP32 frames and AI processing of ESP32-origin frames are **not verified**.
+
+The isolated recorded-video fallback passed actual YOLO, event/evidence persistence, REST/WebSocket and headless Edge checks; source remained `video_file`, `esp32_camera_verified:false`. VLM/LLM were explicitly off for this fallback-only regression run; their previously verified local-model implementation and enabled normal launcher defaults were preserved. Artifacts: `data/hardware_identification/stream_preparation/` and `stream_fallback/`. These are private local validation artifacts, not included in Git and not hardware-camera proof.
+
 
 ## Current enabled-AI presentation
 

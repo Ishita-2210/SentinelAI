@@ -16,17 +16,26 @@ SentinelAI processes a laptop webcam or a video file on a Windows laptop. It tra
 
 ## Architecture
 
-```text
-Webcam / local video
-  -> YOLO11n + ByteTrack -> state manager -> deterministic event engine
-  -> JPEG evidence + SQLite -> REST / WebSocket -> browser dashboard
-
-Saved event keyframe -> managed Florence worker -> separate visual-check metadata
-Question -> retrieved SQLite records -> local SmolLM2 source selection -> linked answer
-
-Optional, separately authorized: host alerts <-> USB ESP32 telemetry
-Unverified camera path: camera ESP32 -> UART2 DevKit bridge -> USB -> host
+```mermaid
+flowchart TD
+    W[Official: laptop webcam 0] --> C[OpenCV capture]
+    V[Recorded video / reproducible fixtures] --> C
+    C --> T[YOLO11n + ByteTrack]
+    T --> S[State manager and deterministic event rules]
+    S --> E[Unique JPEG keyframe + SQLite event ID and source metadata]
+    E --> Q[Bounded event queue]
+    Q --> F[Local Florence-2 worker]
+    F --> R[Uncalibrated presence answer or base-model caption]
+    R --> E
+    E --> A[REST + WebSocket dashboard]
+    U[User question] --> D[Deterministic bounded SQLite retrieval]
+    E --> D
+    D --> L[Local SmolLM2: constrained source selection]
+    L --> A
+    X[Experimental ESP32 camera: unverified] -. Physical approval and diagnostics required .-> B[UART receiver / bounded latest-frame buffer]
+    B -. Separate source, never automatic fallback .-> T
 ```
+
 
 See [architecture](docs/ARCHITECTURE.md) and [known limitations](docs/KNOWN_LIMITATIONS.md).
 
@@ -83,11 +92,14 @@ After setup, model workers use offline/cache-only loading. Missing files, loadin
 
 ## Configure and launch
 
-For the laptop webcam:
+The official presentation source is the laptop webcam. Both Florence-2 and SmolLM2 remain enabled:
 
 ```powershell
-& .\scripts\run_presentation.ps1 -Source 0
+Set-Location D:\SentinelAI
+& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0
 ```
+
+The zero-argument launcher also selects webcam `0`. Explicit webcam selection bypasses ESP32 hardware preflight and blocks physical serial access. A failed webcam never silently changes to a video or another source.
 
 For a local video:
 
@@ -101,7 +113,7 @@ Both models are enabled by default. The launcher validates the source/configurat
 
 ### Recorded demo
 
-The private laptop recording is not redistributed: its privacy/redistribution rights were not established for publication. Keep your own authorized clip at `data/demo/webcam.avi` to use the zero-argument launcher, or pass `-Source` as above. The default launcher fails clearly if the clip is missing; it does not fabricate frames.
+The private laptop recording is not redistributed: its privacy/redistribution rights were not established for publication. Keep your own authorized clip at `data/demo/webcam.avi` and explicitly pass `-Source data/demo/webcam.avi`. The zero-argument launcher selects webcam 0. Explicit `-Source esp32` retains its fail-closed hardware gates; it does not fabricate frames.
 
 Recorded-video loops reset temporal state. Repeated entries in replay history are not unique real-world arrivals. Use a webcam or an appropriately long video to demonstrate dwell naturally. Source labels distinguish video files, webcams and the unverified ESP32 camera.
 
@@ -119,7 +131,7 @@ Then in another terminal:
 & .\.venv\Scripts\python.exe scripts/verify_presentation.py
 ```
 
-This optional real-model/browser check assumes the default recorded clip is supplied locally. It saves `data/presentation/dashboard_ai_enabled.png` and `real_ai_validation.json`. Only publish screenshots you have permission to share.
+This optional real-model/browser check expects the laptop webcam by default. Its results and screenshot are saved in a new directory under `data/presentation/validation_*`; recorded-video validation requires `--expected-source video_file`. Only publish screenshots you have permission to share.
 
 ## Tests and firmware builds
 
@@ -131,17 +143,82 @@ This optional real-model/browser check assumes the default recorded clip is supp
 & .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/uart_probe
 & .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/camera_uart_probe
 & .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/uart_programmer_bridge
+# Inert camera-driver reference only; not a physical camera target or upload image:
+& .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/camera_capture
 ```
 
-Firmware commands compile only; they do not upload. Ordinary tests use simulated models/serial, do not open cameras or COM9, and do not demonstrate hardware operation. The verified development run passed **173 regression tests and four firmware builds**. Separately, real local Florence/LLM inference, changing recorded-video frames, browser QA and preview recovery passed on the development laptop. These are recorded results, not a guarantee for a fresh installation; private result artifacts are not bundled.
+Firmware commands compile only; they do not upload. Ordinary tests use synthetic images/records and mocked model/serial responses. They do not demonstrate physical hardware or model quality. Fresh results and the distinction between unit tests, genuine inference, browser checks and historical validation are recorded in [final validation](docs/FINAL_VALIDATION.md).
 
 ## ESP32 status and safe setup
 
 The original telemetry sketch is preserved under `esp32/SentinelTelemetry`. Historical physical tests established USB telemetry, ping and alert acknowledgements on the primary DevKit. No physical actuator or on-device AI is claimed.
 
-**The ESP32 camera path does not work as a verified end-to-end integration yet.** Camera-board power/regulator routing, the second DevKit's supply/current budget, UART0/IO0/reset routing and programming controls remain unverified. Real camera PING/PONG, initialization/PID and image capture have not passed. COM9 must not be treated as a direct camera programmer.
+**ESP32 camera integration is experimental. Physical sensor initialization, firmware flashing, genuine JPEG reception, continuous video, dashboard display, and AI processing of real ESP32-origin frames have not been verified end to end.** Camera-board power/regulator routing, the second DevKit's supply/current budget, UART0/IO0/reset routing and programming controls remain unverified. Real camera PING/PONG, initialization/PID and image capture have not passed. COM9 must not be treated as a direct camera programmer.
+
+Prepared host camera-stream framing/decoding and explicit `-Source esp32` now exist, but camera mode fails closed until independent physical approval and live diagnostics pass. `scripts/check_esp32_camera.py` reports the current blocked stages without opening serial. Installed probe/telemetry firmware does not emit capture packets. A gated `esp32/camera_capture` core now implements real driver/PID/JPEG transport logic offline, but its included reference image is deliberately inert and is not a build for the unidentified physical camera.
 
 The UART probe explicitly uses primary RX16/TX17; the camera responder and binary bridge are separate, compile-tested projects. Do not flash, erase, energize or alter wiring based on compilation. Keep real telemetry and fresh recoverable backups intact. Follow [ESP32 setup and stage gates](docs/ESP32_SETUP.md).
+
+
+## Pipeline and analysis lifecycle
+
+YOLO11n and ByteTrack share one model invocation per frame; the standalone `Detector` remains a compatibility utility. Confidence defaults to 0.5 and IoU to 0.7. ByteTrack IDs connect boxes to state histories. The state manager computes motion using elapsed timestamps (normalized to a 30 FPS reference); loitering and unattended durations use elapsed time. Rules detect entry, exit, zone changes, dwell, rapid motion and unattended-object candidates. These are heuristics, not established intent or ownership. Disconnections and video rewinds reset temporal state.
+
+Each deterministic event is inserted into SQLite with its source metadata and a unique saved JPEG path. Missing image writes leave an event with no evidence reference. Selected event types enter a bounded priority queue, deduplicated while pending. Queue overload is explicitly skipped. The worker checks the queued image SHA-256 and the event association; results retain event ID, task, model, prompt, checked time, hash, raw observation and error/status. Shutdown marks pending work cancelled. Failed checks can be retried from the API; inference timeouts require restarting the worker/application.
+
+**Florence-2** processes the selected saved image. With the local trained adapter it retains the training-compatible yes/no/unknown prompt. Without that adapter it uses the supported `<DETAILED_CAPTION>` task and parses its task-keyed output; the presence answer remains `unknown`. The base caption has a bounded 64-token minimum budget. This task follows the [upstream Florence model card](https://huggingface.co/microsoft/Florence-2-base-ft). Still images cannot verify running, ownership, dwell time or an exit. Successful output stays `inconclusive`; confidence is never fabricated. Invalid inputs, corrupt images, malformed output, dependency errors and model timeouts remain distinguishable from success.
+
+**SmolLM2** receives bounded retrieved event metadata, missing-evidence indicators and available Florence observations labeled unverified. It selects a supplied event ID through constrained JSON generation. The host validates the response and renders facts and links from SQLite. Records are removed whole to fit 1,536 prompt tokens; generation defaults to 96 tokens. Missing records, invalid selections and model errors return honest recorded-fact fallbacks. No previous LLM prose is reused as evidence. This deliberately limited implementation does not generate an unconstrained investigative narrative or infer identity/intent. Florence observes images; SmolLM2 ranks language context; deterministic rules remain responsible for events. Neither AI output independently proves an event occurred.
+
+## Configuration and storage
+
+The launcher always uses `config.presentation.yaml`. Direct `python -m backend.main` uses ignored `config.yaml`, or `--config PATH` / `SENTINEL_CONFIG`. `SENTINEL_LLM_MODEL` overrides the configured LLM model ID. Paths resolve against the repository root.
+
+| Section | Relevant settings |
+| --- | --- |
+| `camera` | `source`, `width`, `height`, `fps`, `max_read_failures`, `reconnect_delay_s` |
+| `detector` | `model_path`, `confidence_threshold`, `iou_threshold`, `device` |
+| `event_engine` | `zones`, `missing_timeout_s`, `loitering_threshold_s`, `running_speed_px_per_frame`, association/separation distances, `unattended_threshold_s` |
+| `vlm` | `enabled`, `base_model_id`, `adapter_dir`, `runtime_path`, `queue_max_size`, `event_types`, token/load/inference limits |
+| `llm` | `enabled`, `model_id`, `context_event_limit`, `max_new_tokens`, `cpu_threads`, timeout limits |
+| `database` / `evidence` | `path` / `output_dir` |
+| `api` / `esp32` | host/port; optional telemetry configuration (disabled for presentation) |
+
+Supported presentation sources: integer webcam index, existing video file, HTTP(S) stream, explicitly gated `esp32`. Recorded video loops by default; `-NoLoop` stops at EOF. Backend direct mode also accepts RTSP. There is no automatic source substitution. Video timestamps advance from media position; loop boundaries start a new temporal segment. Webcam processing is synchronous with YOLO; slow AI runs separately in subprocesses. The implementation makes no capture FPS or latency guarantee.
+
+Presentation storage: `data/presentation/sentinelai.db` and `data/presentation/events/`. Direct defaults: `data/sentinelai.db` and `data/events/`. SQLite migrations are additive; reads and writes share a serialized connection. There is no automatic evidence retention policy; monitor disk use and archive data while the application is stopped.
+
+## Confirmed interfaces
+
+| Method / endpoint | Purpose |
+| --- | --- |
+| `GET /` | Dashboard |
+| `GET /api/health`, `GET /api/models` | Source freshness, pipeline and model lifecycle/errors |
+| `GET /api/events?limit=50&event_type=LOITERING` | Bounded event history; optional `query` description substring search |
+| `GET /api/events/{event_id}` | Record, evidence reference and VLM metadata |
+| `GET /api/stats`, `GET /api/event_types` | Counts and supported types |
+| `POST /api/events/{event_id}/verify` | Queue saved evidence; enforce configured evidence directory |
+| `POST /api/llm/query` | JSON `question`, optional `event_type`, `limit` (1 to 20) |
+| `GET /api/frame.jpg` | Fresh annotated preview; stale frames return 404 |
+| `GET /evidence/{filename}` | Saved JPEG evidence |
+| `WS /ws/stream` | Live track/event/frame metadata; preview images use REST |
+
+QA examples: "When was the latest loitering event?", "Show event #42", "What happened in the last five minutes?". Around-time queries require an ISO timestamp with explicit timezone. Retrieval is deterministic keyword/time/ID filtering, not general semantic search. A query about unavailable facts returns records plus explicit uncertainty rather than invented facts.
+
+## Repository map
+
+```text
+backend/       camera, tracking, state/events, evidence, SQLite, AI workers, API
+ dashboard/    browser UI (index.html)
+ scripts/      presentation, validation, model setup, experimental diagnostics
+ tests/        deterministic regression tests with synthetic/mock inputs
+ docs/         operations, validation, model and hardware guides
+ esp32/        preserved telemetry, camera references, probes and bridge firmware
+ config.presentation.yaml   full-AI webcam demo on localhost:8010
+ requirements*.txt          host and isolated Florence dependency pins
+```
+
+The experimental camera milestones remain: resolve carrier/power/sensor/GPIO identity with competent electrical inspection; authorize a separate hardware session; identify and build the correct target; verify flashing, sensor initialization and one genuine JPEG; then establish continuous frames, dashboard provenance and local AI processing. No physical step is part of this presentation task.
 
 ## Limitations and troubleshooting
 

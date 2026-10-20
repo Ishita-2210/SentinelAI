@@ -10,13 +10,24 @@ database already exists from a previous version. No data is ever dropped.
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 import threading
+from functools import wraps
 from pathlib import Path
 
 from backend.schemas.event import Event
 
 logger = logging.getLogger(__name__)
+
+
+def serialized_read(method):
+    """One SQLite connection: reads must not join another thread's transaction."""
+    @wraps(method)
+    def read(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return read
 
 
 class EventDatabase:
@@ -81,6 +92,9 @@ class EventDatabase:
             for row in self.connection.execute("PRAGMA table_info(events)")
         }
         additions = {
+            "vlm_task": "TEXT",
+            "vlm_evidence_sha256": "TEXT",
+            "source_metadata": "TEXT",
             "vlm_status": "TEXT",
             "vlm_prompt": "TEXT",
             "vlm_model_id": "TEXT",
@@ -108,6 +122,7 @@ class EventDatabase:
         self,
         event: Event,
         evidence_path: str | None = None,
+        source_metadata: dict | None = None,
     ) -> int:
         """
         Persist a new event and return its auto-incremented ID.
@@ -117,9 +132,9 @@ class EventDatabase:
                 """
                 INSERT INTO events (
                     event_type, track_id, class_name, timestamp,
-                    zone, confidence, description, evidence_path
+                    zone, confidence, description, evidence_path, source_metadata
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.event_type,
@@ -130,6 +145,7 @@ class EventDatabase:
                     event.confidence,
                     event.description,
                     evidence_path,
+                    json.dumps(source_metadata) if source_metadata is not None else None,
                 ),
             )
             self.connection.commit()
@@ -175,6 +191,7 @@ class EventDatabase:
     # READ
     # ======================================
 
+    @serialized_read
     def get_recent_events(
         self,
         limit: int = 50,
@@ -184,7 +201,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
             FROM events
             ORDER BY id DESC
             LIMIT ?
@@ -193,6 +210,7 @@ class EventDatabase:
         )
         return cursor.fetchall()
 
+    @serialized_read
     def get_events_by_type(
         self,
         event_type: str,
@@ -203,7 +221,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
             FROM events
             WHERE event_type = ?
             ORDER BY id DESC
@@ -213,13 +231,14 @@ class EventDatabase:
         )
         return cursor.fetchall()
 
+    @serialized_read
     def get_event_by_id(self, event_id: int) -> sqlite3.Row | None:
         cursor = self.connection.execute(
             """
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
             FROM events
             WHERE id = ?
             """,
@@ -227,6 +246,7 @@ class EventDatabase:
         )
         return cursor.fetchone()
 
+    @serialized_read
     def search_events(
         self,
         query: str,
@@ -238,7 +258,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
             FROM events
             WHERE description LIKE ?
             ORDER BY id DESC
@@ -248,6 +268,7 @@ class EventDatabase:
         )
         return cursor.fetchall()
 
+    @serialized_read
     def get_events_in_range(
         self,
         start_iso: str,
@@ -259,9 +280,9 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
             FROM events
-            WHERE timestamp >= ? AND timestamp <= ?
+            WHERE julianday(timestamp) >= julianday(?) AND julianday(timestamp) <= julianday(?)
             ORDER BY id DESC
             LIMIT ?
             """,
@@ -269,10 +290,12 @@ class EventDatabase:
         )
         return cursor.fetchall()
 
+    @serialized_read
     def count_events(self) -> int:
         cursor = self.connection.execute("SELECT COUNT(*) FROM events")
         return cursor.fetchone()[0]
 
+    @serialized_read
     def count_by_type(self) -> dict[str, int]:
         cursor = self.connection.execute(
             """
@@ -295,20 +318,23 @@ class EventDatabase:
     def __repr__(self) -> str:
         return f"EventDatabase(path={self.database_path!r})"
     def set_verification(self, event_id, status, prompt, model_id, answer=None,
-                         raw_text=None, adapter_loaded=None, error=None):
+                         raw_text=None, adapter_loaded=None, error=None, task=None,
+                         evidence_sha256=None):
         from datetime import datetime, timezone
         with self._lock:
             self.connection.execute("""
                 UPDATE events SET vlm_status=?, vlm_prompt=?, vlm_model_id=?,
-                vlm_answer=?, vlm_raw_text=?, vlm_adapter=?, vlm_error=?, vlm_checked_at=?
+                vlm_answer=?, vlm_raw_text=?, vlm_adapter=?, vlm_error=?, vlm_checked_at=?,
+                vlm_task=?, vlm_evidence_sha256=?
                 WHERE id=?
             """, (status,prompt,model_id,answer,raw_text,
                   None if adapter_loaded is None else int(adapter_loaded),error,
-                  datetime.now(timezone.utc).isoformat(),event_id))
+                  datetime.now(timezone.utc).isoformat(),task,evidence_sha256,event_id))
             self.connection.commit()
 
     def query_events(self, limit=20, event_type=None, start=None, end=None,
-                     event_id=None, with_vlm=False):
+                     event_id=None, with_vlm=False, source_kind=None,
+                     source_device_id=None, evidence_source=None):
         clauses, params = [], []
         for column,value in (("event_type",event_type),("id",event_id)):
             if value is not None:
@@ -319,6 +345,11 @@ class EventDatabase:
             clauses.append("julianday(timestamp) <= julianday(?)");params.append(end)
         if with_vlm:
             clauses.append("(vlm_raw_text IS NOT NULL OR vlm_status IN ('inconclusive','error'))")
+        # Filter before LIMIT so a newer webcam row cannot displace camera evidence.
+        for key,value in (("source_kind",source_kind),("device_id",source_device_id),("evidence_source",evidence_source)):
+            if value is not None:
+                clauses.append("json_extract(CASE WHEN json_valid(source_metadata) THEN source_metadata ELSE '{}' END, '$."+key+"') = ?")
+                params.append(value)
         where = " WHERE "+" AND ".join(clauses) if clauses else ""
         with self._lock:
             rows=self.connection.execute(

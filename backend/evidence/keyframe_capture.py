@@ -1,5 +1,7 @@
 from datetime import datetime
 from pathlib import Path
+import re
+import uuid
 
 import cv2
 
@@ -25,6 +27,9 @@ class KeyframeCapture:
         timestamp: datetime,
     ) -> str:
 
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", event_type):
+            raise ValueError("Invalid evidence event type")
+
         timestamp_text = timestamp.strftime(
             "%Y%m%d_%H%M%S_%f"
         )[:-3]
@@ -32,7 +37,7 @@ class KeyframeCapture:
         filename = (
             f"{timestamp_text}_"
             f"{event_type}_"
-            f"track_{track_id}.jpg"
+            f"track_{track_id}_{uuid.uuid4().hex}.jpg"
         )
 
         file_path = self.output_dir / filename

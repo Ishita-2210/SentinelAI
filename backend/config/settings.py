@@ -84,7 +84,7 @@ class VLMConfig:
     # "cpu", "cuda", "auto"
     device: str = "auto"
     max_new_tokens: int = 4
-    # Maximum frames to queue for VLM verification. Drops oldest if full.
+    # Maximum pending event checks; new requests are explicitly skipped if full.
     queue_max_size: int = 8
     runtime_path: str | None = "data/evaluation/vlm_runtime"
     timeout_s: float = 60.0
@@ -160,7 +160,7 @@ class Settings:
         """Return an absolute path relative to the project root."""
         p = Path(relative)
         if p.is_absolute():
-            return p
+            return p.resolve()
         return (self.project_root / relative).resolve()
 
 
@@ -272,7 +272,7 @@ def validate_settings(cfg: Settings) -> None:
             raise ValueError("Dimensions, rates, queue size and time thresholds must be positive")
     for value in (cfg.vlm.timeout_s, cfg.vlm.load_timeout_s, cfg.llm.timeout_s,
                   cfg.llm.load_timeout_s, cfg.llm.cpu_threads, cfg.llm.max_new_tokens,
-                  cfg.llm.context_event_limit):
+                  cfg.llm.context_event_limit, cfg.vlm.max_new_tokens):
         if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
             raise ValueError("Model limits must be positive")
     for value in (cfg.llm.cpu_threads,cfg.llm.max_new_tokens,cfg.llm.context_event_limit,

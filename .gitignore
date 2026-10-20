@@ -77,3 +77,7 @@ dist/
 *.bin
 *.elf
 *.map
+
+# Verified local camera deployment configuration (never inferred from reference builds)
+esp32/camera_capture/include/verified_camera_config.h
+esp32/camera_capture/platformio.local.ini

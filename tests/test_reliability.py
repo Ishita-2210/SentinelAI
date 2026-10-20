@@ -106,6 +106,7 @@ def test_vlm_inference_preserves_token_dtype_and_casts_pixels():
             return torch.tensor([[1]])
     verifier=VisualVerifier(enabled=False)
     verifier.enabled=True;verifier._torch=torch
+    verifier._adapter_loaded=True  # Synthetic adapter output; base caption tested separately.
     verifier._device="cpu";verifier._dtype=torch.float32
     verifier._model=Model();verifier._processor=Processor()
     result=verifier.verify(Image.new("RGB",(2,2)),"Is a person visible?")

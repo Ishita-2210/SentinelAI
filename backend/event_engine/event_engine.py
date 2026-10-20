@@ -77,6 +77,7 @@ class EventEngine:
         # Track IDs currently known to be in a zone (for exit detection)
         self._active_track_ids: set[int] = set()
         self._last_seen: dict[int, datetime] = {}
+        self._object_last_seen: dict[int, datetime] = {}
         self.missing_timeout = 1.0
 
     def reset(self):
@@ -89,6 +90,7 @@ class EventEngine:
         self._entered.clear()
         self._active_track_ids.clear()
         self._last_seen.clear()
+        self._object_last_seen.clear()
 
     # ======================================
     # MAIN UPDATE
@@ -353,6 +355,31 @@ class EventEngine:
 
         self.detect_unattended(objects, people, timestamp, events)
 
+        # Keep temporal memory only for recent people and owners still linked
+        # to visible objects; otherwise long sessions accumulate retired IDs.
+        for state in objects:
+            self._object_last_seen[state.track_id] = timestamp
+        live_objects = {tid for tid, seen in self._object_last_seen.items()
+                        if (timestamp - seen).total_seconds() <= max(30.0, self.missing_timeout * 2)}
+        for tid in list(self._object_last_seen):
+            if tid not in live_objects:
+                self._object_last_seen.pop(tid, None)
+        for object_id in list(self.object_person_association):
+            if object_id not in live_objects:
+                self.object_person_association.pop(object_id, None)
+                self.separation_times.pop(object_id, None)
+        owners = set(self.object_person_association.values())
+        for tid, seen_at in list(self._last_seen.items()):
+            if tid not in self._active_track_ids and (timestamp - seen_at).total_seconds() > max(30.0, self.missing_timeout * 2):
+                self._last_seen.pop(tid, None)
+                self.previous_zones.pop(tid, None)
+                self.first_seen_in_zone.pop(tid, None)
+                self._entered.discard(tid)
+                if tid not in owners:
+                    self.person_last_positions.pop(tid, None)
+        for tid in list(self.person_last_positions):
+            if tid not in owners and tid not in self._last_seen:
+                self.person_last_positions.pop(tid, None)
         return events
 
     # ======================================

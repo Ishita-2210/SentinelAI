@@ -1,4 +1,4 @@
-# Local presentation: real local AI enabled; ESP32 serial disabled.
+# Official presentation: laptop webcam; experimental ESP32 gates remain intact.
 camera:
   source: 0
 detector:

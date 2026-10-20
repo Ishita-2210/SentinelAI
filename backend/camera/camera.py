@@ -115,6 +115,7 @@ class CameraSource:
 
     def open(self) -> None:
         """Open the camera/video source. Called automatically by __enter__."""
+        self.close()
         self._cap = self._open_capture()
         self._consecutive_failures = 0
 
@@ -141,7 +142,7 @@ class CameraSource:
 
         success, frame = self._cap.read()
 
-        if success:
+        if success and isinstance(frame, np.ndarray) and frame.dtype == np.uint8 and frame.ndim == 3 and frame.shape[2] == 3 and frame.size:
             self._consecutive_failures = 0
             return True, frame
 
@@ -160,7 +161,7 @@ class CameraSource:
                 self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 self._consecutive_failures = 0
                 ok, frame = self._cap.read()
-                if not ok:
+                if not ok or frame is None or not frame.size:
                     raise CameraError("Looping video has no decodable frames")
                 return ok, frame
             else:

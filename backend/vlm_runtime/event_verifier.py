@@ -53,7 +53,7 @@ _EVENT_QUESTIONS: dict[str, str] = {
     "UNATTENDED_OBJECT": "Is a bag or portable object visible in the image?",
 }
 
-_DEFAULT_QUESTION = "Is there any suspicious or unusual activity visible?"
+_DEFAULT_QUESTION = "Is an object visible in the image?"
 
 
 def get_verification_question(

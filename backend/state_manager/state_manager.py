@@ -86,12 +86,19 @@ class StateManager:
         # 2. Check missing objects
         # -----------------------------------
 
-        for track_id, state in self.states.items():
+        for track_id, state in list(self.states.items()):
 
             if track_id in current_track_ids:
                 continue
 
             if state.status == "REMOVED":
+                del self.states[track_id]
+                continue
+
+            # Brief dropouts preserve identity. Long-expired tracks must not
+            # retain an unbounded history or old dwell state when IDs recur.
+            if (timestamp - state.last_seen).total_seconds() > max(30.0, self.missing_timeout * 2):
+                del self.states[track_id]
                 continue
 
             if state.missing_since is None:

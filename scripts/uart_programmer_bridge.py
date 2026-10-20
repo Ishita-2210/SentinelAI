@@ -1,4 +1,9 @@
-"""Prepare a future fixed-baud DevKit programming relay; default is inert.
+"""LEGACY GPIO16/17 firmware relay; NOT the current ESP-A EN-low wiring.
+
+Do not run --serve with the new direct USB-UART adapter connection.
+The manual read-only replacement is scripts/camera_chip_id.ps1.
+Retained for historical compatibility; ESP-A must not be flashed for this route.
+Prepare a future fixed-baud DevKit programming relay; default is inert.
 
 No flash command is implemented. --serve requires three operator declarations.
 Declarations do not measure power or establish target routing. Hardware mode is
@@ -186,27 +191,14 @@ def main(argv=None):
     if not 1 <= args.listen_port <= 65535:
         parser.error("--listen-port must be1..65535")
     if not args.serve:
-        print(json.dumps(dict(mode="preparation_only", serial_opened=False,
+        print(json.dumps(dict(mode="legacy_preparation_only", serial_opened=False,
+            current_route="ESP-A EN-low direct USB-UART; use camera_chip_id.ps1 manually",
             baud=BAUD, uart2_rx=16, uart2_tx=17, host_idle_s=HOST_IDLE_S,
             session_s=SESSION_S, bind="127.0.0.1",
             physical_requirements="verified camera power, routing, IO0/reset and download mode"), indent=2))
         return 0
-    try:
-        require_hardware_gates(args.power_verified, args.boot_controls_verified,
-                               args.target_download_mode)
-        port = open_devkit(args.port)
-        try:
-            result = serve_once(port, listen_port=args.listen_port,
-                power_verified=args.power_verified,
-                boot_controls_verified=args.boot_controls_verified,
-                target_download_mode=args.target_download_mode)
-            print(json.dumps(dict(transport_result=result, camera_identity_verified=False)))
-        finally:
-            port.close()
-    except (BridgeError, OSError) as exc:
-        print("Bridge failed: "+str(exc), file=sys.stderr)
-        return 1
-    return 0
+    print("Legacy --serve is disabled for the current ESP-A EN-low baseline. Use scripts/camera_chip_id.ps1 manually.", file=sys.stderr)
+    return 1
 
 if __name__ == "__main__":
     raise SystemExit(main())
