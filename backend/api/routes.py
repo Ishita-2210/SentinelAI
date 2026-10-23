@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import logging
 import time
+import threading
 from datetime import datetime, timezone
 from typing import Any
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -37,18 +39,25 @@ router = APIRouter()
 
 _latest_jpeg: bytes | None = None
 _preview_info = (None, 0)  # monotonic capture time and sequence; immutable snapshot
+_preview_lock = threading.Lock()
 PREVIEW_STALE_S = 5.0
 
 def update_preview(jpeg: bytes) -> None:
     global _latest_jpeg, _preview_info
-    _latest_jpeg = jpeg
-    _preview_info = (time.monotonic(), _preview_info[1] + 1)
+    with _preview_lock:
+        _latest_jpeg = jpeg
+        _preview_info = (time.monotonic(), _preview_info[1] + 1)
 
 
-def preview_status():
-    captured_at, sequence = _preview_info
+def _preview_snapshot():
+    with _preview_lock:
+        return _latest_jpeg, _preview_info
+
+
+def preview_status(snapshot=None):
+    jpeg, (captured_at, sequence) = snapshot if snapshot is not None else _preview_snapshot()
     age = max(0, time.monotonic() - captured_at) if captured_at is not None else None
-    fresh = bool(_live_state.get("camera_ok") and _latest_jpeg and age is not None and age <= PREVIEW_STALE_S)
+    fresh = bool(_live_state.get("camera_ok") and jpeg and age is not None and age <= PREVIEW_STALE_S)
     return dict(frames_arriving=fresh, preview_sequence=sequence,
                 preview_age_s=round(age, 3) if age is not None else None,
                 preview_status="live" if fresh else "stale" if captured_at is not None else "waiting")
@@ -124,6 +133,7 @@ class LLMQueryRequest(BaseModel):
     question: str = Field(min_length=1,max_length=2000)
     event_type: str | None = None
     limit: int = Field(default=20,ge=1,le=20)
+    mode: Literal["facts", "explain"] = "facts"
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +260,8 @@ async def llm_query(body: LLMQueryRequest) -> JSONResponse:
         return JSONResponse(content=dict(answer=recorded_answer(events),answer_kind="recorded_facts",
             source_event_ids=[x["id"] for x in events],sources=events,
             llm_status="disabled",llm_used=False,generation_status="disabled"))
-    result = await asyncio.to_thread(_llm.query,body.question,events,filters)
+    method = _llm.explain if body.mode == "explain" else _llm.query
+    result = await asyncio.to_thread(method,body.question,events,filters)
     return JSONResponse(content=result)
 
 
@@ -281,8 +292,39 @@ async def verify_event(event_id: int):
     if status in {"evidence_missing","evidence_mismatch","event_missing"}:raise HTTPException(422,status)
     return JSONResponse(status_code=202,content={"event_id":event_id,"verification_status":status})
 
+
+@router.get("/scene", summary="Latest saved-frame description and written explanation")
+async def scene_analysis():
+    scene = _ai.scene_snapshot() if _ai is not None else {"state":"unavailable"}
+    return JSONResponse(content=scene)
+
+
+@router.post("/scene", summary="Describe a fresh real preview, then explain it with the local LLM")
+async def describe_scene():
+    import asyncio
+    if _ai is None or not _ai.cfg.vlm.enabled:
+        raise HTTPException(503,"Florence is disabled; enable VLM to describe a frame")
+    captured = _preview_snapshot()
+    preview = preview_status(captured)
+    if not preview["frames_arriving"]:
+        raise HTTPException(409,"No fresh source frame is available to describe")
+    # Copy the current preview now; inference never substitutes a later frame.
+    jpeg = captured[0]
+    metadata = dict(preview_sequence=preview["preview_sequence"],
+                    frame_age_at_request_s=preview["preview_age_s"],
+                    source_kind=_live_state.get("source_kind"), source_label=_live_state.get("source_label"),
+                    source=_live_state.get("source"), image_kind="annotated_preview")
+    try:
+        status, scene = await asyncio.to_thread(_ai.enqueue_scene,jpeg,metadata)
+    except OSError:
+        raise HTTPException(503,"Could not save the source frame in the configured evidence directory")
+    if status in {"disabled","stopped","error","queue_full"}:
+        raise HTTPException(503,"Scene analysis unavailable: " + status)
+    return JSONResponse(status_code=202,content=dict(scene or {}, request_status=status))
+
 @router.get("/frame.jpg", summary="Latest annotated host frame")
 async def latest_frame():
-    if not preview_status()["frames_arriving"]:
+    captured = _preview_snapshot()
+    if not preview_status(captured)["frames_arriving"]:
         raise HTTPException(404, "No live frame available")
-    return Response(_latest_jpeg, media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Preview-Sequence": str(_preview_info[1])})
+    return Response(captured[0], media_type="image/jpeg", headers={"Cache-Control": "no-store", "X-Preview-Sequence": str(captured[1][1])})

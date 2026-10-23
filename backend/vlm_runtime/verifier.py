@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -317,13 +318,29 @@ class VisualVerifier:
                 error=f"Inference error: {exc}",
             )
 
-    def _run_inference(self, pil_image, question: str) -> VerificationResult:
+    def describe(self, image) -> VerificationResult:
+        """Caption with the base model, temporarily bypassing a presence adapter.
+
+        Reuses the loaded model; the adapter is restored by its context manager.
+        The managed worker serializes caption and verification requests.
+        """
+        if not self.is_ready:
+            return VerificationResult("unknown", "", None, False, error="VLM is disabled.", task="<DETAILED_CAPTION>")
+        try:
+            context = self._model.disable_adapter() if self._adapter_loaded else nullcontext()
+            with context:
+                return self._run_inference(self._to_pil(image), "", descriptive=True)
+        except Exception as exc:
+            return VerificationResult("unknown", "", None, False, error=f"Caption inference error: {exc}", task="<DETAILED_CAPTION>")
+
+    def _run_inference(self, pil_image, question: str, descriptive=False) -> VerificationResult:
         """Internal inference — only called with a valid PIL.Image."""
         torch = self._torch
         # The custom adapter was trained on yes/no questions. The public base
         # model supports task tokens, not arbitrary visual question answering.
-        task = "adapter_vqa" if self._adapter_loaded else "<DETAILED_CAPTION>"
-        prompt = self.prompt_template.format(question=question.strip()) if self._adapter_loaded else task
+        use_adapter = self._adapter_loaded and not descriptive
+        task = "adapter_vqa" if use_adapter else "<DETAILED_CAPTION>"
+        prompt = self.prompt_template.format(question=question.strip()) if use_adapter else task
 
         # Processor returns pixel_values, input_ids, attention_mask
         inputs = self._processor(
@@ -345,18 +362,18 @@ class VisualVerifier:
             generated_ids = self._model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs.get("pixel_values"),
-                max_new_tokens=self.max_new_tokens if self._adapter_loaded else max(64, self.max_new_tokens),
+                max_new_tokens=self.max_new_tokens if use_adapter else max(64, self.max_new_tokens),
                 num_beams=1,
                 do_sample=False,
             )
 
         raw_text = self._processor.batch_decode(
-            generated_ids, skip_special_tokens=self._adapter_loaded
+            generated_ids, skip_special_tokens=use_adapter
         )[0]
 
         if not isinstance(raw_text, str) or not raw_text.strip():
             raise ValueError("Florence returned empty or malformed text")
-        if not self._adapter_loaded:
+        if not use_adapter:
             parsed = self._processor.post_process_generation(
                 raw_text, task=task, image_size=pil_image.size)
             observation = parsed.get(task) if isinstance(parsed, dict) else None
@@ -365,10 +382,10 @@ class VisualVerifier:
             raw_text = observation.strip()
 
         return VerificationResult(
-            answer=normalize_answer(raw_text) if self._adapter_loaded else "unknown",
+            answer=normalize_answer(raw_text) if use_adapter else "unknown",
             raw_text=raw_text.strip(),
             confidence=None,  # not fabricated
-            adapter_loaded=self._adapter_loaded,
+            adapter_loaded=use_adapter,
             task=task,
         )
 

@@ -28,8 +28,9 @@ def prepare_llm_inputs(tokenizer, request, max_tokens=1536):
         if not context:
             raise ValueError("Question and system prompt exceed the local context budget")
         context.pop()
+        visible = [{key:value for key,value in event.items() if key != "id"} for event in context] if request.get("task") == "explain" else context
         messages = [messages[0], {"role":"user", "content":
-            "Events: "+json.dumps(context)+"\nQuestion: "+request["question"]}]
+            "Events: "+json.dumps(visible)+"\nQuestion: "+request["question"]}]
     allowed = [event["id"] for event in context] if context is not None else request.get("allowed_event_ids")
     return inputs, allowed
 
@@ -82,7 +83,7 @@ def main():
                     if request.get("evidence_sha256") and digest != request["evidence_sha256"]:
                         raise ValueError("Evidence changed after verification was queued")
                     with Image.open(io.BytesIO(image_bytes)) as image:
-                        result = model.verify(image, request["question"])
+                        result = model.describe(image) if request.get("task") == "caption" else model.verify(image, request["question"])
                     data = dict(answer=result.answer, raw_text=result.raw_text,
                                 confidence=None, adapter_loaded=result.adapter_loaded,
                                 error=result.error, model_id=config["model_id"], task=result.task,
@@ -91,7 +92,7 @@ def main():
                 else:
                     inputs, allowed = prepare_llm_inputs(tokenizer, request)
                     constrained = {}
-                    if allowed is not None:
+                    if allowed is not None and request.get("task") != "explain":
                         if len(allowed)>20 or any(type(x) is not int or x<1 for x in allowed):
                             raise ValueError("Invalid allowed event IDs")
                         candidates = [json.dumps({"event_ids":[x]},separators=(",",":")) for x in allowed]
@@ -113,7 +114,7 @@ def main():
                                               skip_special_tokens=True).strip()
                     data = dict(text=answer, input_tokens=inputs["input_ids"].shape[1],
                                 generated_tokens=tokens.shape[1]-inputs["input_ids"].shape[1],
-                                model_id=config["model_id"])
+                                model_id=config["model_id"], context_event_ids=allowed)
             send(dict(type="result", id=request["id"], data=data))
         except Exception as exc:
             traceback.print_exc(file=sys.stderr)

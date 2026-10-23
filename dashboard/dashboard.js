@@ -12,6 +12,7 @@ const tone = state => ['ready','live','connected'].includes(state) ? 'ok' : ['er
 let allEvents = [], activeFilter = '', eventsKey = '', ws, reconnectTimer, wsDelay = 1000, stopped = false;
 let healthBusy = false, eventsBusy = false, previewBusy = false, previewObjectURL, lastPreviewOK = 0;
 let selectedId = null, detailKey = '', detailBusy = false, detailVersion = 0, lastFocus;
+let scenePollBusy = false, sceneSubmitting = false, sceneActive = false, lastSceneAttempt = 0, displayedSceneId;
 const timers = [];
 
 async function request(url, options = {}, timeout = 5000) {
@@ -27,16 +28,62 @@ async function request(url, options = {}, timeout = 5000) {
   } finally { clearTimeout(timer); }
 }
 
-function setPill(id, state, text) { $(id).className = 'pill ' + state; $(id).textContent = text; }
+function setPill(id, state, text) { $(id).className = 'pill ' + state; $(id).textContent = text; $(id).title = text; }
 function hidePreview(reason) {
   $('live-preview').hidden = true; $('cam-placeholder').hidden = false;
-  $('preview-message').textContent = reason; setPill('pill-cam','warn',reason);
+  $('preview-message').textContent = reason; setPill('pill-cam','warn','Camera · waiting'); $('pill-cam').title = reason;
 }
 function renderTracks(tracks = []) {
   $('tracks-chip').textContent = tracks.length;
   $('track-chip').textContent = tracks.length + ' tracks';
-  $('track-list').innerHTML = tracks.length ? tracks.map(t => `<div class="track-item"><span><span class="tid">#${esc(t.track_id)}</span> ${esc(t.class_name)}<br><span class="tzone">${esc(t.zone || 'No named zone')}</span></span><span class="tconf">${Number.isFinite(t.confidence) ? (t.confidence * 100).toFixed(0) + '% detection' : 'Confidence unavailable'}</span></div>`).join('') : '<p class="empty">No active tracks in the latest frame</p>';
+  const list = $('track-list'), retained = new Set(tracks.map(t => String(t.track_id)));
+  list.querySelectorAll('[data-track-id]').forEach(row => { if (!retained.has(row.dataset.trackId)) row.remove(); });
+  let empty = list.querySelector('.empty');
+  if (tracks.length && empty) empty.remove();
+  if (!tracks.length && !empty) { empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'No active tracks in the latest frame'; list.append(empty); }
+  const rows = new Map([...list.querySelectorAll('[data-track-id]')].map(row => [row.dataset.trackId,row]));
+  for (const track of tracks) {
+    let row = rows.get(String(track.track_id));
+    if (!row) { row = document.createElement('div'); row.className = 'track-item'; row.dataset.trackId = String(track.track_id); list.append(row); }
+    const content = `<span><span class="tid">#${esc(track.track_id)}</span> ${esc(track.class_name)}<br><span class="tzone">${esc(track.zone || 'No named zone')}</span></span><span class="tconf">${Number.isFinite(track.confidence) ? (track.confidence * 100).toFixed(0) + '% detection' : 'Confidence unavailable'}</span>`;
+    if (row.innerHTML !== content) row.innerHTML = content;
+  }
 }
+
+function renderScene(data) {
+  sceneActive = ['queued','describing','explaining'].includes(data.state);
+  $('describe-scene').disabled = sceneActive || sceneSubmitting;
+  $('describe-scene').textContent = sceneActive ? 'Analyzing snapshot…' : 'Describe current frame';
+  if (data.caption) {
+    if (displayedSceneId !== data.id) {
+      displayedSceneId = data.id;
+      $('scene-caption').textContent = data.caption;
+      $('scene-explanation').textContent = 'Writing an explanation of this image description…';
+      $('scene-source').textContent = `${data.source_label || data.source_kind || 'Source'} · Snapshot ${timeLabel(data.requested_at)} · annotated frame #${data.preview_sequence}`;
+      $('scene-evidence').href = evidenceURL(data.evidence_url); $('scene-evidence').hidden = false;
+    }
+    if (data.explanation) $('scene-explanation').textContent = data.explanation;
+    $('scene-explanation-detail').textContent = [data.explanation_model || 'Local LLM', label(data.explanation_status), data.llm_used ? 'Written model interpretation' : data.explanation ? 'Visual-description fallback; LLM not used' : '', data.explanation_ms == null ? '' : duration(data.explanation_ms), data.explanation_error].filter(Boolean).join(' · ');
+  }
+  const messages = {idle:'Ready to describe a fresh source frame.', queued:'Snapshot saved; waiting for the current inference to finish.', describing:'Florence is writing a description of the saved frame.', explaining:'Visual description ready. The local LLM is writing its explanation.', completed:'Saved-frame description and interpretation. Check the original frame; model observations may be inaccurate.', error:'Could not describe this snapshot: ' + (data.error || 'Model error'), cancelled:'Analysis was cancelled. Request a fresh snapshot after restarting.', unavailable:'Start the video pipeline with VLM enabled to describe a frame.'};
+  $('scene-status').textContent = (messages[data.state] || label(data.state)) + (sceneActive && displayedSceneId && !data.caption ? ' Previous completed description remains visible until the new one is ready.' : '');
+}
+async function pollScene() {
+  if (scenePollBusy || stopped) return;
+  scenePollBusy = true;
+  try { renderScene(await request(API + '/scene')); }
+  catch (error) { $('scene-status').textContent = 'Scene analysis status unavailable: ' + error.message + '. Any displayed text refers to its saved snapshot.'; }
+  finally { scenePollBusy = false; }
+}
+async function describeScene() {
+  if (sceneSubmitting || sceneActive || stopped) return;
+  sceneSubmitting = true; lastSceneAttempt = Date.now(); $('describe-scene').disabled = true;
+  $('scene-status').textContent = 'Saving the actual current frame for description…';
+  try { renderScene(await request(API + '/scene',{method:'POST'})); }
+  catch (error) { $('scene-status').textContent = error.message + '. Previous descriptions, if any, refer to their saved snapshots.'; }
+  finally { sceneSubmitting = false; $('describe-scene').disabled = sceneActive; }
+}
+$('describe-scene').addEventListener('click',describeScene);
 function visualStatus(event) {
   if (event.vlm_error) return 'Visual check failed: ' + event.vlm_error;
   if (event.vlm_status === 'inconclusive') return event.vlm_task === '<DETAILED_CAPTION>' ? 'Caption available · interpretation remains inconclusive' : 'Presence hypothesis: ' + (event.vlm_answer || 'unknown') + ' · uncalibrated';
@@ -88,6 +135,7 @@ async function pollHealth() {
     $('st-vlm-sub').textContent = 'Completed: ' + (vm.inference_count || 0) + ' · Queued: ' + (vm.queued || 0);
     $('vlm-detail').textContent = modelSummary(vm);
     $('llm-detail').textContent = modelSummary(lm);
+    if ($('auto-describe').checked && data.frames_arriving && vm.state === 'ready' && Date.now() - lastSceneAttempt >= 30000 && !sceneActive) describeScene();
     const components = [['Source',data.camera_status],['Detector',data.yolo_status],['Tracker',data.tracker_status],['Event rules',data.event_engine_status],['SQLite',data.database_status],['REST API','ready']];
     $('component-status').innerHTML = components.map(([name,state]) => `<div class="health-item"><span>${esc(name)}</span><span class="${tone(state)}">${esc(label(state))}</span></div>`).join('') + (data.last_error ? '<p class="health-note">' + esc(data.last_error) + '</p>' : '');
     $('footer-ts').textContent = 'Status checked ' + new Date().toLocaleTimeString();
@@ -114,7 +162,7 @@ function connectWS() {
       if (data.type === 'vlm_result') { loadInitial(); refreshDetail(); }
     } catch { $('events-status').textContent = 'Unreadable stream update; event history will refresh through the API.'; }
   };
-  ws.onclose = () => { if (stopped) return; setPill('pill-ws','warn','Stream · reconnecting'); $('dc-banner').classList.add('show'); reconnectTimer = setTimeout(connectWS,wsDelay); wsDelay = Math.min(wsDelay * 1.5,15000); };
+  ws.onclose = () => { if (stopped) return; setPill('pill-ws','warn','Stream · retrying'); $('dc-banner').classList.add('show'); reconnectTimer = setTimeout(connectWS,wsDelay); wsDelay = Math.min(wsDelay * 1.5,15000); };
   ws.onerror = () => ws.close();
 }
 async function refreshPreview() {
@@ -128,7 +176,7 @@ async function refreshPreview() {
     try { image.src = nextURL; await image.decode(); } catch (error) { URL.revokeObjectURL(nextURL); throw error; }
     if (previewObjectURL) URL.revokeObjectURL(previewObjectURL);
     previewObjectURL = nextURL; lastPreviewOK = Date.now();
-    image.hidden = false; $('cam-placeholder').hidden = true; setPill('pill-cam','ok','Camera · frames arriving');
+    image.hidden = false; $('cam-placeholder').hidden = true; setPill('pill-cam','ok','Camera · live');
   } catch { hidePreview('Waiting for fresh frames'); }
   finally { clearTimeout(timer); previewBusy = false; }
 }
@@ -184,8 +232,8 @@ $('qa-form').addEventListener('submit',async event => {
   $('qa-submit').disabled = true; $('qa-answer').textContent = ''; $('qa-sources').replaceChildren();
   $('qa-status').textContent = 'Retrieving event evidence and requesting local inference…';
   try {
-    const data = await request(API + '/llm/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,limit:20})},60000);
-    $('qa-status').textContent = `Task: ${question} · ${data.model || 'Model not configured'} · ${label(data.generation_status)} · ${data.llm_used ? 'Local model used' : 'Recorded-fact fallback'}${data.inference_ms == null ? '' : ' · Inference: ' + duration(data.inference_ms)}${data.notice ? ' · ' + data.notice : ''}${data.error ? ' · ' + data.error : ''}`;
+    const data = await request(API + '/llm/query',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question,limit:20,mode:$('qa-mode').value})},60000);
+    $('qa-status').textContent = `Task: ${question} · ${data.model || 'Model not configured'} · ${label(data.generation_status)} · ${data.answer_kind === 'model_explanation' ? 'Written AI interpretation' : data.llm_used ? 'Recorded facts with model-selected sources' : 'Supplied-data fallback'}${data.inference_ms == null ? '' : ' · Inference: ' + duration(data.inference_ms)}${data.notice ? ' · ' + data.notice : ''}${data.error ? ' · ' + data.error : ''}`;
     $('qa-answer').textContent = data.answer;
     for (const source of data.sources || []) {
       if (!validId(source.id)) continue;
@@ -198,6 +246,6 @@ $('qa-form').addEventListener('submit',async event => {
   } catch (error) { $('qa-status').textContent = error.name === 'AbortError' ? 'Local question timed out. Monitoring continues; retry when the model is available.' : error.message + '. You can retry this question.'; }
   finally { $('qa-submit').disabled = false; pollHealth(); }
 });
-timers.push(setInterval(refreshPreview,500),setInterval(pollHealth,3000),setInterval(loadInitial,3000),setInterval(refreshDetail,2000),setInterval(() => { if (Date.now() - lastPreviewOK > 5000) hidePreview('Frames paused / stale'); },1000));
+timers.push(setInterval(refreshPreview,500),setInterval(pollHealth,3000),setInterval(loadInitial,3000),setInterval(refreshDetail,2000),setInterval(pollScene,2000),setInterval(() => { if (Date.now() - lastPreviewOK > 5000) hidePreview('Frames paused / stale'); },1000));
 window.addEventListener('pagehide', () => { stopped = true; timers.forEach(clearInterval); clearTimeout(reconnectTimer); if (ws) ws.close(); if (previewObjectURL) URL.revokeObjectURL(previewObjectURL); });
-refreshPreview(); connectWS(); pollHealth(); loadInitial();
+refreshPreview(); connectWS(); pollHealth(); loadInitial(); pollScene();

@@ -30,6 +30,7 @@ See [fresh release validation](docs/RELEASE_VALIDATION.md) for exact checks and 
 - Local SmolLM2 event QA with validated event references and factual text rendered from SQLite.
 - Truthful model lifecycle/error states, preview freshness and source provenance.
 - Evidence-first event inspection with original images, dimensions, hashes, actual tasks and measured processing duration.
+- Written current-frame descriptions from Florence-2, followed by local LLM explanations, with saved snapshot links and optional 30-second refresh.
 - Responsive, keyboard-accessible dark dashboard; bounded WebSocket delivery and local text escaping.
 - Preserved ESP32 telemetry firmware, isolated UART probes and a temporary programming bridge.
 
@@ -128,6 +129,8 @@ For a local video:
 
 Open **http://127.0.0.1:8010**. Use **Inspect event** to trace a timeline record to its original keyframe and actual Florence output. **Ask about event** fills a supported source-ID query; answer references reopen the same inspector. The launcher prints the log location; `data/logs/presentation_latest.json` records the latest command and log path. Ctrl+C stops the application.
 
+The **What is happening in this frame?** panel displays actual written image descriptions and scene explanations. It analyzes a saved copy of the current annotated preview; it does not describe every video frame. Automatic refresh is enabled every 30 seconds while fresh frames and a loaded VLM are available; untick it for manual use, or press **Describe current frame**. The displayed timestamp and image link identify the analyzed snapshot. Tracking rows and dynamic output panels scroll internally to keep surrounding cards in place.
+
 Both models are enabled by default. The launcher validates the source/configuration and independently blocks serial opening. For an explicit lightweight opt-out, use `-NoVLM -NoLLM`. `-Check` validates without starting the application. Camera indices are opened only when the application starts.
 
 ### Recorded demo
@@ -199,7 +202,7 @@ Each deterministic event is inserted into SQLite with its source metadata and a 
 
 **Florence-2** processes the selected saved image. With the local trained adapter it retains the training-compatible yes/no/unknown prompt. Without that adapter it uses the supported `<DETAILED_CAPTION>` task and parses its task-keyed output; the presence answer remains `unknown`. The base caption has a bounded 64-token minimum budget. This task follows the [upstream Florence model card](https://huggingface.co/microsoft/Florence-2-base-ft). Still images cannot verify running, ownership, dwell time or an exit. Successful output stays `inconclusive`; confidence is never fabricated. Invalid inputs, corrupt images, malformed output, dependency errors and model timeouts remain distinguishable from success.
 
-**SmolLM2** receives bounded retrieved event metadata, missing-evidence indicators and available Florence observations labeled unverified. It selects a supplied event ID through constrained JSON generation. The host validates the response and renders facts and links from SQLite. Records are removed whole to fit 1,536 prompt tokens; generation defaults to 96 tokens. Missing records, invalid selections and model errors return honest recorded-fact fallbacks. No previous LLM prose is reused as evidence. This deliberately limited implementation does not generate an unconstrained investigative narrative or infer identity/intent. Florence observes images; SmolLM2 ranks language context; deterministic rules remain responsible for events. Neither AI output independently proves an event occurred.
+**SmolLM2** has two answer styles. **Written explanation**, the dashboard default, generates a short paragraph from supplied event records and available visual descriptions. **Recorded facts** retains constrained source-ID selection and deterministic fact rendering from SQLite. The frame-description panel separately explains Florence's caption of the saved snapshot; the language model does not see pixels. Generated prose is labelled as interpretation, references outside supplied records are rejected, and source links come from the host. The small model may still produce inaccurate wording: inspect the image rather than treating its prose as verified fact. Records are removed whole to fit 1,536 input tokens; generation defaults to 96 tokens. Missing data, unusable output and service errors produce explicit supplied-data fallbacks. No previous generated explanation is reused as evidence.
 
 ## Configuration and storage
 
@@ -229,7 +232,8 @@ Presentation storage: `data/presentation/sentinelai.db` and `data/presentation/e
 | `GET /api/events/{event_id}` | Record, evidence reference and VLM metadata |
 | `GET /api/stats`, `GET /api/event_types` | Counts and supported types |
 | `POST /api/events/{event_id}/verify` | Queue saved evidence; enforce configured evidence directory |
-| `POST /api/llm/query` | JSON `question`, optional `event_type`, `limit` (1 to 20) |
+| `POST /api/llm/query` | JSON `question`, optional `event_type`, `limit` (1 to 20), `mode` (`facts` or `explain`) |
+| `POST /api/scene`, `GET /api/scene` | Queue/read an actual fresh-frame caption and written scene explanation |
 | `GET /api/frame.jpg` | Fresh annotated preview; stale frames return 404 |
 | `GET /evidence/{filename}` | Saved JPEG evidence |
 | `WS /ws/stream` | Live track/event/frame metadata; preview images use REST |
@@ -258,7 +262,7 @@ The experimental camera milestones remain: resolve carrier/power/sensor/GPIO ide
 - **Port 8010 busy:** stop the existing backend before starting another launcher.
 - **Models loading/error:** inspect the dashboard and `data/logs/vlm-worker.log` / `llm-worker.log`. Ready means weights loaded; completed-inference counters establish requests actually completed. Missing weights need the explicit setup commands above.
 - **Florence compatibility:** install the pinned overlay; do not downgrade the main environment globally. Presence answers are uncalibrated and do not validate elapsed activity.
-- **LLM scope:** the small LLM selects retrieved event IDs; it is not a general chatbot. Factual answer text comes from stored records, with a visible fallback on model failure.
+- **LLM scope:** written explanations use supplied records or Florence captions and may be inaccurate. Recorded-facts mode preserves validated source selection and SQLite fact rendering. Neither mode is a general chatbot; unusable model output has a visible fallback.
 - **CPU contention/queue full:** FPS varies; event checks may be skipped by the bounded queue. No throughput guarantee is claimed.
 - **Accuracy:** representative detector/event/tracker field accuracy is not measured. Existing adapter evaluation did not establish an improvement. See [accuracy evaluation](docs/ACCURACY_EVALUATION.md).
 - **Local-only security:** use one backend worker and the localhost presentation binding. This is not an authenticated public hosting configuration.

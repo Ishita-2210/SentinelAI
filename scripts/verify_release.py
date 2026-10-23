@@ -104,7 +104,20 @@ runpy.run_module('backend.main',run_name='__main__')
                     errors = []
                     page.on('pageerror',lambda error:errors.append(str(error)))
                     page.goto(str(client.base_url),wait_until='domcontentloaded')
+                    page.uncheck('#auto-describe')
                     page.wait_for_function("!document.getElementById('live-preview').hidden && document.getElementById('live-preview').naturalWidth > 0",timeout=20000)
+                    page.click('#describe-scene')
+                    def scene_completed():
+                        scene = client.get('/api/scene').json()
+                        if scene.get('state') == 'error': raise RuntimeError(scene.get('error'))
+                        return scene if scene.get('state') == 'completed' else None
+                    scene = wait_until(scene_completed,100,process)
+                    assert scene['caption_task'] == '<DETAILED_CAPTION>' and scene['caption']
+                    assert scene['llm_used'] and scene['explanation_kind'] == 'model_explanation',scene
+                    page.wait_for_function("document.getElementById('scene-caption').textContent === " + json.dumps(scene['caption']),timeout=10000)
+                    page.wait_for_function("document.getElementById('scene-explanation').textContent === " + json.dumps(scene['explanation']),timeout=10000)
+                    report['written_scene'] = scene
+                    print('Real frame caption and written LLM explanation are visible in the dashboard.',flush=True)
                     page.locator('.inspect-event').first.click()
                     page.wait_for_selector('#detail-image')
                     page.wait_for_function("document.getElementById('detail-image').naturalWidth > 0",timeout=10000)
@@ -112,6 +125,7 @@ runpy.run_module('backend.main',run_name='__main__')
                     page.click('#detail-ask')
                     assert page.input_value('#qa-question').startswith('Show event #')
                     frames_before = client.get('/api/health').json()['frames_processed']
+                    page.select_option('#qa-mode','facts')
                     with page.expect_response(lambda r:'/api/llm/query' in r.url,timeout=65000) as response_info:
                         page.click('#qa-submit')
                     answer = response_info.value.json()
@@ -120,6 +134,15 @@ runpy.run_module('backend.main',run_name='__main__')
                     page.wait_for_function("document.getElementById('qa-answer').textContent.length > 0")
                     assert page.locator('#qa-sources .inspect-event').count() > 0
                     report['llm_answer'] = answer
+                    page.select_option('#qa-mode','explain')
+                    with page.expect_response(lambda r:'/api/llm/query' in r.url,timeout=65000) as written_response:
+                        page.click('#qa-submit')
+                    written = written_response.value.json()
+                    # Unusable small-model prose must fall back honestly; it must
+                    # never turn an invented reference into a clickable source.
+                    assert ((written['answer_kind'] == 'model_explanation' and written['llm_used']) or
+                            (written['answer_kind'] == 'recorded_facts' and written.get('notice') and not written['llm_used'])),written
+                    report['written_event_answer'] = written
                     assert client.get('/api/health').json()['frames_processed'] > frames_before
                     page.screenshot(path=str(out / 'dashboard_desktop.png'),full_page=True)
                     page.locator('#qa-sources .inspect-event').first.click()
@@ -130,6 +153,30 @@ runpy.run_module('backend.main',run_name='__main__')
                     page.set_viewport_size({'width':390,'height':844})
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
                     page.screenshot(path=str(out / 'dashboard_mobile.png'),full_page=True)
+                    # Explicitly simulated layout stress, separate from model results.
+                    stability_script = '''() => {
+                        const positions = () => ['.scene-card','.qa-card','#ev-grid','footer'].map(selector => {
+                            const node = document.querySelector(selector), box = node.getBoundingClientRect();
+                            return {selector,top:box.top + scrollY,height:box.height};
+                        });
+                        const before = positions();
+                        for (const count of [0,1,40,2,0]) {
+                            renderTracks(Array.from({length:count},(_,i) => ({track_id:i+1,class_name:'test person',zone:'long simulated zone '.repeat(12),confidence:.9})));
+                            const after = positions();
+                            if (after.some((box,i) => Math.abs(box.top-before[i].top)>.5 || Math.abs(box.height-before[i].height)>.5)) return {passed:false,before,after};
+                        }
+                        document.getElementById('qa-status').textContent = 'simulated verbose status '.repeat(200);
+                        document.getElementById('qa-answer').textContent = 'simulated long answer '.repeat(500);
+                        const after = positions();
+                        return {passed:after.every((box,i) => Math.abs(box.top-before[i].top)<=.5 && Math.abs(box.height-before[i].height)<=.5),before,after};
+                    }'''
+                    layout_results = {}
+                    for width in (1440,390):
+                        page.set_viewport_size({'width':width,'height':900})
+                        stability = page.evaluate(stability_script)
+                        assert stability['passed'],stability
+                        layout_results[str(width)] = stability
+                    report['layout_stability'] = dict(passed=True,viewports=layout_results)
                     report['browser'] = {'desktop':True,'mobile':True,'event_detail':True,'escape_closes_dialog':True,'source_links':True,'errors':errors}
                     assert not errors,errors
 

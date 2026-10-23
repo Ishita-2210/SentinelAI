@@ -32,6 +32,15 @@
         </div>
         <div class="source-line" id="device-status" role="status">Awaiting source status</div>
       </section>
+      <section class="card scene-card" aria-labelledby="scene-title">
+        <div class="card-head"><div><h2 id="scene-title">What is happening in this frame?</h2><p id="scene-source">Waiting for an actual source frame</p></div><button class="fb" id="describe-scene">Describe current frame</button></div>
+        <div class="scene-columns">
+          <div><h3>Image description <span>Florence-2</span></h3><p id="scene-caption" class="written-output">A written description will appear after Florence analyzes a real frame.</p><div id="vlm-detail" class="model-detail">VLM: awaiting status</div></div>
+          <div><h3>Scene explanation <span>Local LLM</span></h3><p id="scene-explanation" class="written-output">The local language model will explain the visual description in plain language.</p><p id="scene-explanation-detail" class="model-detail">Waiting for visual description</p></div>
+        </div>
+        <div class="scene-toolbar"><label><input type="checkbox" id="auto-describe" checked> Update from a fresh frame every 30 seconds</label><a id="scene-evidence" hidden target="_blank" rel="noopener">View analyzed frame ↗</a></div>
+        <p class="panel-note scene-status" id="scene-status" role="status">Descriptions refer to a saved snapshot, not every live frame. Model observations can be inaccurate.</p>
+      </section>
       <div class="stats">
         <div class="stat"><span class="stat-label">Recorded events</span><strong class="stat-val" id="st-total">—</strong><span class="stat-sub">Stored history, including replay</span></div>
         <div class="stat"><span class="stat-label">Active tracks</span><strong class="stat-val" id="st-tracks">—</strong><span class="stat-sub">Latest processed frame</span></div>
@@ -49,12 +58,11 @@
     <aside class="right-col" aria-label="Analysis and system health">
       <section class="card" aria-labelledby="health-title"><div class="card-head"><h2 id="health-title">System health</h2><span class="chip" id="api-state">Waiting</span></div><div id="component-status" class="health-grid" role="status">Awaiting API status</div></section>
       <section class="card" aria-labelledby="tracks-title"><div class="card-head"><h2 id="tracks-title">Detection &amp; tracking</h2><span class="chip" id="tracks-chip">0</span></div><div class="track-list" id="track-list"><p class="empty">No active tracks</p></div></section>
-      <section class="card" aria-labelledby="vlm-title"><div class="card-head"><div><p class="eyebrow">01 / VISUAL OBSERVATION</p><h2 id="vlm-title">Florence-2</h2></div></div><div class="panel-body"><p class="muted">Inspect an event to see its original keyframe, actual model task, output and provenance.</p><div id="vlm-detail" class="model-detail">Awaiting runtime status</div><p class="panel-note">A caption or presence hypothesis cannot confirm dwell time, ownership or intent.</p></div></section>
-      <section class="card" aria-labelledby="qa-title"><div class="card-head"><div><p class="eyebrow">02 / SOURCE-LINKED ANSWERS</p><h2 id="qa-title">Ask event history</h2></div></div><div class="panel-body">
+      <section class="card qa-card" aria-labelledby="qa-title"><div class="card-head"><div><p class="eyebrow">SOURCE-LINKED ANSWERS</p><h2 id="qa-title">Ask event history</h2></div></div><div class="panel-body">
         <div id="llm-detail" class="model-detail">LLM: awaiting status</div>
-        <form id="qa-form"><label for="qa-question">Question about recorded events</label><textarea id="qa-question" maxlength="2000" required rows="3" placeholder="When was the latest loitering event?"></textarea><div class="question-examples"><button type="button" class="fb" data-question="What happened in the last five minutes?">Recent events</button><button type="button" class="fb" data-question="Which events have VLM verification results?">Visual checks</button></div><button id="qa-submit" type="submit" class="primary">Ask local model <span aria-hidden="true">↗</span></button></form>
+        <form id="qa-form"><label for="qa-question">Question about recorded events</label><textarea id="qa-question" maxlength="2000" required rows="3" placeholder="Describe what is visible in the latest event."></textarea><label for="qa-mode">Answer style</label><select id="qa-mode"><option value="explain">Written explanation</option><option value="facts">Recorded facts</option></select><div class="question-examples"><button type="button" class="fb" data-question="Describe what is visible in the latest event.">Describe latest event</button><button type="button" class="fb" data-question="What happened in the last five minutes?">Recent events</button></div><button id="qa-submit" type="submit" class="primary">Ask local model <span aria-hidden="true">↗</span></button></form>
         <div id="qa-status" role="status" class="panel-note"></div><div id="qa-answer"></div><ol id="qa-sources"></ol>
-        <p class="panel-note">SmolLM2 selects supplied event references. Factual answer text comes from stored records. Unsupported conclusions remain unknown.</p>
+        <p class="panel-note">Written explanations use supplied event records and available image descriptions. They are model interpretations. Select recorded facts for the deterministic record view.</p>
       </div></section>
       <section class="card" aria-labelledby="evidence-title"><div class="card-head"><h2 id="evidence-title">Saved keyframes</h2><span class="chip" id="ev-count-chip">0</span></div><div class="ev-grid" id="ev-grid"><p class="empty">No saved images yet</p></div></section>
     </aside>
