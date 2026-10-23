@@ -1,3 +1,5 @@
+> Historical validation and setup notes. For this release pass, see [RELEASE_VALIDATION.md](RELEASE_VALIDATION.md), [AI_MODELS.md](AI_MODELS.md) and the authoritative [hardware guide](HARDWARE_SETUP.md).
+
 # Final engineering validation - 20 October 2026
 
 The official presentation uses the laptop webcam with both local models:

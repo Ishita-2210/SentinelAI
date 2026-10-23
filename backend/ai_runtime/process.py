@@ -36,12 +36,14 @@ class ModelProcess:
         self._last_inference_error = None
         self._inference_count = 0
         self._last_inference_at = None
+        self._last_inference_ms = None
 
     def snapshot(self):
         return dict(state=self._state, enabled=self.enabled, model_id=self.model_id,
                     error=self._error, last_inference_error=self._last_inference_error,
                     busy=self._request_lock.locked(), local_only=True,
                     inference_count=self._inference_count, last_inference_at=self._last_inference_at,
+                    last_inference_ms=self._last_inference_ms,
                     **self._meta)
 
     def start(self):
@@ -118,6 +120,7 @@ class ModelProcess:
         if not self._request_lock.acquire(blocking=False):
             raise ModelBusy(self.kind.upper()+" already has an inference request")
         try:
+            started = time.perf_counter()
             self._counter += 1
             ident = self._counter
             future = Future()
@@ -138,6 +141,7 @@ class ModelProcess:
             self._last_inference_error = None
             self._inference_count += 1
             self._last_inference_at = time.time()
+            self._last_inference_ms = round((time.perf_counter() - started) * 1000, 1)
             return result["data"]
         finally:
             self._pending.pop(locals().get("ident"), None)

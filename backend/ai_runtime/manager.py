@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 import queue
 import threading
+import time
 from backend.ai_runtime.process import ModelProcess
 from backend.llm.assistant import LLMAssistant
 from backend.vlm_runtime.event_verifier import get_verification_question
@@ -75,6 +76,8 @@ class AIManager:
             try:_,_,event_id,path,prompt,digest=self._queue.get(timeout=.2)
             except queue.Empty:continue
             try:
+                self.db.set_verification(event_id,"processing",prompt,self.cfg.vlm.base_model_id)
+                started = time.perf_counter()
                 result=self.vlm.request(dict(image_path=path,question=prompt,evidence_sha256=digest),wait_loading=True)
                 event = self.db.get_event_by_id(event_id)
                 if event is None or (event["evidence_path"] and Path(event["evidence_path"]).resolve() != Path(path).resolve()):
@@ -84,14 +87,15 @@ class AIManager:
                     self.db.set_verification(event_id,"inconclusive",prompt,result["model_id"],
                         answer=result["answer"],raw_text=result["raw_text"],
                         adapter_loaded=result["adapter_loaded"],task=result.get("task","adapter_vqa"),
-                        evidence_sha256=result.get("evidence_sha256",digest))
+                        evidence_sha256=result.get("evidence_sha256",digest),
+                        duration_ms=round((time.perf_counter()-started)*1000,1))
             except Exception as exc:
                 if not self._stopped.is_set():
                     self.db.set_verification(event_id,"error",prompt,self.cfg.vlm.base_model_id,error=str(exc))
             finally:
                 if self._stopped.is_set():
                     event=self.db.get_event_by_id(event_id)
-                    if event and event["vlm_status"]=="queued":
+                    if event and event["vlm_status"] in {"queued","processing"}:
                         self.db.set_verification(event_id,"cancelled",prompt,
                             self.cfg.vlm.base_model_id,error="Application stopped before verification completed")
                 with self._lock:self._pending.discard(event_id)
@@ -106,6 +110,6 @@ class AIManager:
             self._pending.clear()
         for event_id in pending:
             event=self.db.get_event_by_id(event_id)
-            if event and event["vlm_status"]=="queued":
+            if event and event["vlm_status"] in {"queued","processing"}:
                 self.db.set_verification(event_id,"cancelled",event["vlm_prompt"],
                     self.cfg.vlm.base_model_id,error="Application stopped before verification completed")

@@ -1,3 +1,5 @@
+> Current release: the redesigned dashboard uses **Inspect event**, **Analyze saved keyframe** and **Ask about event**. Source references reopen the same evidence inspector. See [release validation](RELEASE_VALIDATION.md) and [hardware setup](HARDWARE_SETUP.md). Earlier validation commands/results below are retained as historical context where they reference local fixtures.
+
 > Official presentation: `& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0`, dashboard http://127.0.0.1:8010. See [fresh validation](FINAL_VALIDATION.md). ESP32 camera is experimental and excluded from the presentation.
 
 # Demonstration guide - Windows PowerShell
@@ -50,7 +52,7 @@ Use the laptop webcam for this verified demonstration. Keep the wired camera/Dev
 ```
 Open http://127.0.0.1:8010 in a browser. Show camera, YOLO and ESP32 status, enter the configured zone and remain for 10 seconds. Open the resulting evidence thumbnail and inspect track ID, timestamp and deterministic event label. Wait for actual VLM/LLM ready states; check the saved-keyframe presence hypothesis and ask "When was the latest loitering event?". Model output remains inconclusive for temporal verification. For core-only operation use --no-vlm --no-llm.
 
-Default entrance zone is x=0..1000, y=0..1000 in source pixels. Adjust named zones to actual camera dimensions in config.yaml before the presentation.
+Default entrance zone is x=0..1000, y=0..1000 in source pixels. Adjust named zones to actual camera dimensions in config.presentation.yaml for the launcher, or the explicitly selected config for direct mode before the presentation.
 
 ## Bounded real-video replay
 data/demo/webcam.avi is an actual 30-frame, 640x480 webcam recording captured during verification.

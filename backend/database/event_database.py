@@ -92,6 +92,7 @@ class EventDatabase:
             for row in self.connection.execute("PRAGMA table_info(events)")
         }
         additions = {
+            "vlm_duration_ms": "REAL",
             "vlm_task": "TEXT",
             "vlm_evidence_sha256": "TEXT",
             "source_metadata": "TEXT",
@@ -201,7 +202,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, vlm_duration_ms, source_metadata
             FROM events
             ORDER BY id DESC
             LIMIT ?
@@ -221,7 +222,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, vlm_duration_ms, source_metadata
             FROM events
             WHERE event_type = ?
             ORDER BY id DESC
@@ -238,7 +239,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, vlm_duration_ms, source_metadata
             FROM events
             WHERE id = ?
             """,
@@ -258,7 +259,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, vlm_duration_ms, source_metadata
             FROM events
             WHERE description LIKE ?
             ORDER BY id DESC
@@ -280,7 +281,7 @@ class EventDatabase:
             SELECT id, event_type, track_id, class_name, timestamp,
                    zone, confidence, description, evidence_path,
                    vlm_answer, vlm_raw_text, vlm_adapter, vlm_error,
-                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, source_metadata
+                   vlm_status, vlm_prompt, vlm_model_id, vlm_checked_at, vlm_task, vlm_evidence_sha256, vlm_duration_ms, source_metadata
             FROM events
             WHERE julianday(timestamp) >= julianday(?) AND julianday(timestamp) <= julianday(?)
             ORDER BY id DESC
@@ -319,17 +320,17 @@ class EventDatabase:
         return f"EventDatabase(path={self.database_path!r})"
     def set_verification(self, event_id, status, prompt, model_id, answer=None,
                          raw_text=None, adapter_loaded=None, error=None, task=None,
-                         evidence_sha256=None):
+                         evidence_sha256=None, duration_ms=None):
         from datetime import datetime, timezone
         with self._lock:
             self.connection.execute("""
                 UPDATE events SET vlm_status=?, vlm_prompt=?, vlm_model_id=?,
                 vlm_answer=?, vlm_raw_text=?, vlm_adapter=?, vlm_error=?, vlm_checked_at=?,
-                vlm_task=?, vlm_evidence_sha256=?
+                vlm_task=?, vlm_evidence_sha256=?, vlm_duration_ms=?
                 WHERE id=?
             """, (status,prompt,model_id,answer,raw_text,
                   None if adapter_loaded is None else int(adapter_loaded),error,
-                  datetime.now(timezone.utc).isoformat(),task,evidence_sha256,event_id))
+                  datetime.now(timezone.utc).isoformat(),task,evidence_sha256,duration_ms,event_id))
             self.connection.commit()
 
     def query_events(self, limit=20, event_type=None, start=None, end=None,

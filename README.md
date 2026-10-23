@@ -4,6 +4,23 @@ Local video intelligence with YOLO11n, ByteTrack, event evidence, Florence-2 and
 
 SentinelAI processes a laptop webcam or a video file on a Windows laptop. It tracks objects, derives deterministic events, saves evidence in SQLite/JPEG, and serves a live dashboard through FastAPI and WebSocket. Inference runs locally; the ESP32 is a telemetry device, not the inference host.
 
+## Why SentinelAI
+
+Continuous video is difficult to review manually. SentinelAI turns detections into timestamped, source-linked events and saved keyframes, then lets a developer inspect what the deterministic rules and local models actually produced. It is a local-first engineering prototype; camera hardware and field accuracy have separate validation boundaries.
+
+## Project status
+
+| Capability | Implemented | Validation boundary |
+| --- | --- | --- |
+| File/webcam capture, YOLO11n, ByteTrack, event rules, SQLite/evidence | Yes | Automated contracts; recorded-video end-to-end checks. Fresh webcam behavior is machine dependent. |
+| Florence-2 visual analysis | Yes | Real local inference checked separately; outputs remain uncalibrated/inconclusive. |
+| SmolLM2 source-linked event QA | Yes | Real local generation and validated IDs checked separately; factual text comes from SQLite. |
+| Responsive dashboard and event inspector | Yes | Browser checks include source links, keyframe inspection and unavailable/error states. |
+| ESP32 telemetry | Source preserved | Historical primary-DevKit results only; no hardware tested in this release pass. |
+| ESP32 camera video | Host preparation and gated firmware references | Power, programming, sensor initialization, genuine JPEG and continuous feed remain physically unverified. |
+
+See [fresh release validation](docs/RELEASE_VALIDATION.md) for exact checks and limitations. Historical reports are dated evidence, not current guarantees.
+
 ## Features
 
 - YOLO11n detection and persistent ByteTrack identities.
@@ -12,6 +29,8 @@ SentinelAI processes a laptop webcam or a video file on a Windows laptop. It tra
 - Event-triggered Florence-2 checks in a bounded asynchronous queue.
 - Local SmolLM2 event QA with validated event references and factual text rendered from SQLite.
 - Truthful model lifecycle/error states, preview freshness and source provenance.
+- Evidence-first event inspection with original images, dimensions, hashes, actual tasks and measured processing duration.
+- Responsive, keyboard-accessible dark dashboard; bounded WebSocket delivery and local text escaping.
 - Preserved ESP32 telemetry firmware, isolated UART probes and a temporary programming bridge.
 
 ## Architecture
@@ -88,15 +107,15 @@ An optional local adapter can be supplied under `backend/vlm/models/sentinel-vqa
 & .\.venv\Scripts\python.exe scripts/download_llm.py --download
 ```
 
-After setup, model workers use offline/cache-only loading. Missing files, loading errors and inference timeouts remain visible. See [local models](docs/LOCAL_MODELS_SETUP.md) for details.
+After setup, model workers use offline/cache-only loading. Missing files, loading errors and inference timeouts remain visible. See [AI model setup and interpretation](docs/AI_MODELS.md) and [detailed local model notes](docs/LOCAL_MODELS_SETUP.md).
 
 ## Configure and launch
 
 The official presentation source is the laptop webcam. Both Florence-2 and SmolLM2 remain enabled:
 
 ```powershell
-Set-Location D:\SentinelAI
-& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0
+Set-Location <your-clone-directory>
+& .\scripts\run_presentation.ps1 -Source 0
 ```
 
 The zero-argument launcher also selects webcam `0`. Explicit webcam selection bypasses ESP32 hardware preflight and blocks physical serial access. A failed webcam never silently changes to a video or another source.
@@ -107,7 +126,7 @@ For a local video:
 & .\scripts\run_presentation.ps1 -Source 'C:\path\to\your-video.mp4'
 ```
 
-Open **http://127.0.0.1:8010**. The launcher prints the log location; `data/logs/presentation_latest.json` records the latest command and log path. Ctrl+C stops the application.
+Open **http://127.0.0.1:8010**. Use **Inspect event** to trace a timeline record to its original keyframe and actual Florence output. **Ask about event** fills a supported source-ID query; answer references reopen the same inspector. The launcher prints the log location; `data/logs/presentation_latest.json` records the latest command and log path. Ctrl+C stops the application.
 
 Both models are enabled by default. The launcher validates the source/configuration and independently blocks serial opening. For an explicit lightweight opt-out, use `-NoVLM -NoLLM`. `-Check` validates without starting the application. Camera indices are opened only when the application starts.
 
@@ -119,7 +138,17 @@ Recorded-video loops reset temporal state. Repeated entries in replay history ar
 
 ### Screenshots
 
-Screenshots are generated locally and excluded from Git because they can contain people, private video and event details. To generate your own end-to-end screenshot, first run:
+The existing project screenshot below shows genuine **historical event history from the earlier interface**, before this release's redesign. It is already versioned; it is not evidence of the current models or camera hardware.
+
+![Historical SentinelAI event timeline](screenshots/slide10-dashboard-event-log.png)
+
+Fresh dashboard, event-inspector and mobile screenshots are created by the opt-in release verifier and remain under ignored `data/`, since frames can contain private people or locations:
+
+```powershell
+& .\.venv\Scripts\python.exe scripts/verify_release.py --source 'C:\path\to\authorized-video.mp4' --base
+```
+
+This uses real cached models with a local video and separate validation storage; it never opens serial or a webcam. The report labels simulated adverse-state browser checks separately. To generate your own webcam end-to-end screenshot, first run:
 
 ```powershell
 & .\scripts\run_presentation.ps1 -MaxSeconds 240
@@ -147,7 +176,7 @@ This optional real-model/browser check expects the laptop webcam by default. Its
 & .\.venv\Scripts\python.exe -m platformio run --project-dir esp32/camera_capture
 ```
 
-Firmware commands compile only; they do not upload. Ordinary tests use synthetic images/records and mocked model/serial responses. They do not demonstrate physical hardware or model quality. Fresh results and the distinction between unit tests, genuine inference, browser checks and historical validation are recorded in [final validation](docs/FINAL_VALIDATION.md).
+Firmware commands compile only; they do not upload. Ordinary tests use synthetic images/records and mocked model/serial responses. They do not demonstrate physical hardware or model quality. Fresh results and the distinction between unit tests, genuine inference, browser checks and historical validation are recorded in [release validation](docs/RELEASE_VALIDATION.md).
 
 ## ESP32 status and safe setup
 
@@ -157,14 +186,16 @@ The original telemetry sketch is preserved under `esp32/SentinelTelemetry`. Hist
 
 Prepared host camera-stream framing/decoding and explicit `-Source esp32` now exist, but camera mode fails closed until independent physical approval and live diagnostics pass. `scripts/check_esp32_camera.py` reports the current blocked stages without opening serial. Installed probe/telemetry firmware does not emit capture packets. A gated `esp32/camera_capture` core now implements real driver/PID/JPEG transport logic offline, but its included reference image is deliberately inert and is not a build for the unidentified physical camera.
 
-The UART probe explicitly uses primary RX16/TX17; the camera responder and binary bridge are separate, compile-tested projects. Do not flash, erase, energize or alter wiring based on compilation. Keep real telemetry and fresh recoverable backups intact. Follow [ESP32 setup and stage gates](docs/ESP32_SETUP.md).
+The UART probe explicitly uses primary RX16/TX17; the camera responder and binary bridge are separate, compile-tested projects. Do not flash, erase, energize or alter wiring based on compilation. Keep real telemetry and fresh recoverable backups intact. Read the complete [hardware setup and reported wiring guide](docs/HARDWARE_SETUP.md), then [firmware development](docs/ESP32_SETUP.md) and [first-JPEG milestones](docs/ESP32_FIRST_JPEG.md).
+
+Current user-reported UART connections are primary GPIO17/TX2 -> camera U0R, camera U0T -> primary GPIO16/RX2, and common GND. Secondary DevKit 5V/GND connects to camera 5V/GND as an unverified intended supply path. Neither continuity nor voltage/current capability has been independently checked. The primary connects to laptop USB; the secondary to a power bank. Exact camera revision, sensor and pin map remain unknown. Earlier conflicting wiring accounts are preserved as history.
 
 
 ## Pipeline and analysis lifecycle
 
 YOLO11n and ByteTrack share one model invocation per frame; the standalone `Detector` remains a compatibility utility. Confidence defaults to 0.5 and IoU to 0.7. ByteTrack IDs connect boxes to state histories. The state manager computes motion using elapsed timestamps (normalized to a 30 FPS reference); loitering and unattended durations use elapsed time. Rules detect entry, exit, zone changes, dwell, rapid motion and unattended-object candidates. These are heuristics, not established intent or ownership. Disconnections and video rewinds reset temporal state.
 
-Each deterministic event is inserted into SQLite with its source metadata and a unique saved JPEG path. Missing image writes leave an event with no evidence reference. Selected event types enter a bounded priority queue, deduplicated while pending. Queue overload is explicitly skipped. The worker checks the queued image SHA-256 and the event association; results retain event ID, task, model, prompt, checked time, hash, raw observation and error/status. Shutdown marks pending work cancelled. Failed checks can be retried from the API; inference timeouts require restarting the worker/application.
+Each deterministic event is inserted into SQLite with its source metadata and a unique saved JPEG path. Missing image writes leave an event with no evidence reference. Selected event types enter a bounded priority queue, deduplicated while pending. Queue overload is explicitly skipped. The record distinguishes queued work from active processing and retains measured processing duration (including model-readiness wait when applicable). The worker checks the queued image SHA-256 and the event association; results retain event ID, task, model, prompt, checked time, hash, raw observation and error/status. Shutdown marks pending work cancelled. Failed checks can be retried from the API; inference timeouts require restarting the worker/application.
 
 **Florence-2** processes the selected saved image. With the local trained adapter it retains the training-compatible yes/no/unknown prompt. Without that adapter it uses the supported `<DETAILED_CAPTION>` task and parses its task-keyed output; the presence answer remains `unknown`. The base caption has a bounded 64-token minimum budget. This task follows the [upstream Florence model card](https://huggingface.co/microsoft/Florence-2-base-ft). Still images cannot verify running, ownership, dwell time or an exit. Successful output stays `inconclusive`; confidence is never fabricated. Invalid inputs, corrupt images, malformed output, dependency errors and model timeouts remain distinguishable from success.
 
@@ -237,3 +268,28 @@ The experimental camera milestones remain: resolve carrier/power/sensor/GPIO ide
 Source, tests, documentation, firmware and dependency manifests are versioned. Environments, caches, secrets, local configuration, databases, logs, evidence, videos, datasets and model weights are excluded. Do not add those files with `git add -f`.
 
 This repository preserves its existing Git history. Generated files previously committed in that history remain there; the cleaned tip stops tracking them without deleting local copies. No project redistribution license has been selected. Third-party models and dependencies retain their upstream license terms.
+
+## Technology and development
+
+Python 3.13, OpenCV, Ultralytics YOLO11n/ByteTrack, SQLite, FastAPI/Uvicorn/WebSocket, plain HTML/CSS/JavaScript, PyTorch/Transformers and Arduino-ESP32/PlatformIO. AI executes on the host; the ESP32 is not an inference accelerator. The managed AI workers currently use CPU; the detector supports configured CPU/CUDA selection. External web fonts are not required by the dashboard.
+
+Use [CONTRIBUTING.md](CONTRIBUTING.md) for checks and change review, [SECURITY.md](SECURITY.md) for local access/privacy boundaries, and [AI_MODELS.md](docs/AI_MODELS.md) for model lifecycle and interpretation. No source redistribution license has been selected; there is intentionally no new `LICENSE` file.
+
+Additional local checks:
+
+```powershell
+& .\.venv\Scripts\python.exe -m compileall -q backend scripts tests
+& .\.venv\Scripts\python.exe scripts/check_repository.py
+git diff --check
+# If Node.js is installed (optional syntax check, not a runtime dependency):
+node --check dashboard/dashboard.js
+```
+
+The publication checker is a local heuristic scan of tracked/unignored candidates; review the staged diff as well. No code or footage is uploaded by that checker. New databases, evidence, logs and model caches are generated locally and stay ignored. There is no configured Python linter/formatter; compile checks, regression tests, JS syntax and diff checks are the available gates.
+
+## Roadmap
+
+- Establish a verified electrical/programming route and real camera PID/JPEG evidence before any hardware video claim.
+- Evaluate detector/tracker/event accuracy and visual-model calibration on representative authorized data.
+- Add authenticated access before considering network deployment beyond a trusted local machine.
+- Design a user-controlled evidence retention policy; no automatic deletion occurs today.

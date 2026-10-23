@@ -3,6 +3,10 @@
 .env.*
 **/.env
 **/.env.*
+!.env.example
+!.env.template
+!**/.env.example
+!**/.env.template
 *.pem
 *.key
 *.p12
@@ -57,17 +61,22 @@ backend/vlm/models/
 backend/event/*.png
 
 # Runtime databases, evidence and logs
-*.db
-*.db-*
-*.sqlite
-*.sqlite3
-*.sqlite-*
-*.sqlite3-*
+/sentinelai.db*
+/events.db*
+/evidence/
+/events/
 *.log
 logs/
 *.tmp
 *.temp
 *.bak
+
+# Explicit locations for private recovery copies and local database outputs
+/recovery/
+/backups/
+/database/*.db
+/database/*.db-*
+/database/*.sqlite*
 
 # Build/package and firmware artifacts
 **/.pio/

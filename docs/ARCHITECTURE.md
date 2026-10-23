@@ -19,7 +19,7 @@ Desired, not yet operational:
 camera -> camera ESP32 UART0 -> DevKit UART2 -> USB -> host CameraSource
 ```
 
-Heavy inference runs on the laptop. The DevKit has historically demonstrated USB telemetry and alert acknowledgement only. Camera supply, header mapping and real UART PING/PONG remain unverified; UART JPEG integration has not been attempted.
+Heavy inference runs on the laptop. The DevKit has historically demonstrated USB telemetry and alert acknowledgement only. Camera supply, header mapping and real UART PING/PONG remain unverified. The host UART JPEG receiver and gated firmware references are implemented and tested offline; no genuine camera image has been received. See [hardware setup](HARDWARE_SETUP.md).
 
 ## Contracts and lifecycle
 
@@ -38,3 +38,11 @@ Question filters cover selected event types/IDs, recent time windows, latest eve
 Main injects shared database/retrieval/AI resources into the API. Standalone API lifespan creates only resources it owns and closes them on exit. A single backend application/worker is supported. Model weights and config/evidence/database paths resolve from the repository. Dashboard requests use its own HTTP/WebSocket origin.
 
 Source provenance distinguishes webcam, file and network stream; USB device presence never implies ESP32-camera video. The latest model demonstration used the repeated-photo integration fixture. Real hardware input requires the staged checks in ESP32_SETUP.md.
+
+## Release reliability and UI
+
+The vanilla HTML/CSS/JavaScript dashboard uses same-origin requests and system fonts. Event history is reconciled by persisted ID, with one in-flight refresh per poller. The native dialog shows original evidence, source metadata, actual Florence task/output/hash and persisted processing duration. Source links from SmolLM2 open the same inspector. Text and attribute values are escaped; filenames are URL-encoded rather than interpolated into executable handlers. Failed image loads retain the event record and show an unavailable state.
+
+WebSocket publication has one coalesced latest-frame slot, a 64-entry notification queue and one drain task. Slow clients have bounded send time and are pruned without holding fast clients. A notification can be displaced under sustained load; SQLite/REST polling recovers authoritative history. This does not guarantee delivery of every live frame. Capture remains synchronous with detector/tracker work; expensive visual/language inference runs separately.
+
+VLM events now distinguish queued and processing state. The additive `vlm_duration_ms` column stores successful processing duration, including readiness wait. Old records remain null and intact. `last_inference_ms` records a successful model request duration; LLM responses include the measured duration of their own successful request. No latency is synthesized for fallbacks or old records.

@@ -1,3 +1,5 @@
+> Historical validation and setup notes. For this release pass, see [RELEASE_VALIDATION.md](RELEASE_VALIDATION.md), [AI_MODELS.md](AI_MODELS.md) and the authoritative [hardware guide](HARDWARE_SETUP.md).
+
 # Direct local VLM and LLM integration
 
 Current presentation: `& D:\SentinelAI\scripts\run_presentation.ps1 -Source 0`, http://127.0.0.1:8010, both models enabled. Direct backend examples below use the separate default configuration/port. See [fresh validation](FINAL_VALIDATION.md).
