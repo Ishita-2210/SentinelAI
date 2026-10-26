@@ -7,3 +7,5 @@ httpx==0.28.1
 PyYAML==6.0.3
 pyserial==3.5
 pytest==9.1.1
+# Presentation preflight inspects the local model cache without downloading weights.
+huggingface_hub==1.32.0
