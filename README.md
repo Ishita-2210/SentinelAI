@@ -297,3 +297,8 @@ The publication checker is a local heuristic scan of tracked/unignored candidate
 - Evaluate detector/tracker/event accuracy and visual-model calibration on representative authorized data.
 - Add authenticated access before considering network deployment beyond a trusted local machine.
 - Design a user-controlled evidence retention policy; no automatic deletion occurs today.
+
+
+## Continuous integration
+
+GitHub Actions runs the host contract suite on Windows with Python 3.13 and `requirements-core.txt`. These tests use controlled fixtures and mocked model/serial boundaries; CI does not open cameras, flash firmware, download model weights or establish hardware performance. Physical-device and real-model validation remain the separate procedures documented above.
