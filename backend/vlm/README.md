@@ -1,7 +1,11 @@
-# SentinelAI VLM — standalone package (no folder structure required)
+# SentinelAI VLM — legacy standalone experiments
 
-4 files, no subfolders, no sibling-file imports. Unzip anywhere in
-Colab (or next to each other on disk) and run.
+This directory preserves the original standalone Florence-2 training and inference tools. The current application sends event evidence from [`backend/main.py`](../main.py) through [`AIManager`](../ai_runtime/manager.py) and [`ModelProcess`](../ai_runtime/process.py) to [`worker.py`](../ai_runtime/worker.py), which loads [`backend.vlm_runtime.verifier.VisualVerifier`](../vlm_runtime/verifier.py). It does not invoke `verify_standalone.py`.
+
+Use the current [model setup](../../docs/AI_MODELS.md) and [accuracy evaluation](../../docs/ACCURACY_EVALUATION.md) for application configuration and interpretation. The commands below preserve the standalone experiment workflow; run them from this directory or an exported bundle. They are not application launch instructions, and a synthetic smoke test does not establish model quality.
+
+The four original standalone files use no sibling-file imports and can be
+kept together in Colab or on disk:
 
 - `train_lora_standalone.py` — builds/validates the dataset, LoRA
   fine-tunes Florence-2, evaluates, saves the adapter. Runs with
@@ -11,8 +15,8 @@ Colab (or next to each other on disk) and run.
   spending any time annotating. The resulting adapter from synthetic
   data is meaningless (colored shapes) — it only proves the code runs.
 - `verify_standalone.py` — loads a (optionally LoRA-adapted) Florence-2
-  model and answers yes/no/unknown for an (image, question) pair. This
-  is what the Event Engine calls for visual verification.
+  model and answers yes/no/unknown for an (image, question) pair in
+  the legacy standalone workflow.
 - `requirements.txt` — `torch`, `transformers`, `peft`, etc.
 - `README.md` — this file.
 
@@ -61,7 +65,7 @@ python train_lora_standalone.py \
 Only proceed to this once step 2's report looks healthy (300+ total
 records, ~20%+ UNKNOWN in every split).
 
-## 4. Inference / wiring into the Event Engine
+## 4. Legacy standalone inference
 
 ```bash
 python verify_standalone.py --image some_frame.jpg \
